@@ -1,111 +1,247 @@
 // metronome-worklet.js
+// AudioWorkletProcessor 기반 메트로놈 엔진 (샘플 정확도 보장 및 오차 계측 추가)
+
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.sampleRate = 48000; // init 메시지로 실제 기기 샘플레이트를 전달받음
-    this.isPlaying = false;
 
-    // 현재 적용 중인 상태
+    this.running = false;
+
+    // 활성 설정
     this.bpm = 60;
-    this.beatsPerBar = 4;
+    this.numerator = 4;
     this.denominator = 4;
     this.volume = 1.0;
+    this.quantize = 'bar';
+    this.pending = null;
 
-    // UI에서 변경 시 다음 박자에 적용할 대기(Pending) 상태 (Quantized Change)
-    this.nextBpm = 60;
-    this.nextBeatsPerBar = 4;
-    this.nextDenominator = 4;
+    this.beatIndex = 0;
+    this.barIndex = 0;
 
-    this.currentBeatIndex = 0;
+    // --- [추가됨] 계측을 위한 절대 샘플 카운터 ---
     this.samplesUntilNextTick = 0;
+    this.totalSamples = 0;
+    this.idealSample = 0;
+    this.lastTickSample = -1;
 
-    // 클릭 사운드 합성을 위한 상태
-    this.clickSamplesRemaining = 0;
-    this.phase = 0;
-    this.freq = 1000;
+    // 클릭 합성용 (최적화된 DSP)
+    this.env = 0.0;
+    this.envDecay = 0.0;
+    this.phase = 0.0;
+    this.freq = 800;
+    this.accentFreq = 1000;
 
-    // 메인 스레드로부터 메시지 수신
-    this.port.onmessage = (e) => {
-      if (e.data.type === 'init') {
-        this.sampleRate = e.data.sampleRate;
-      } else if (e.data.type === 'start') {
-        this.isPlaying = true;
-        this.currentBeatIndex = 0;
-        this.samplesUntilNextTick = 0; // 즉시 첫 틱 발생
-      } else if (e.data.type === 'stop') {
-        this.isPlaying = false;
-        this.clickSamplesRemaining = 0;
-      } else if (e.data.type === 'update') {
-        // UI 변경값을 즉시 반영하지 않고 next 변수에 저장 (Quantized 대기)
-        this.nextBpm = e.data.bpm;
-        this.nextBeatsPerBar = e.data.beatsPerBar;
-        this.nextDenominator = e.data.denominator;
-        this.volume = e.data.volume;
+    this._recomputeTiming();
+    this._setClickEnvelopeTimeConstant(0.02);
+
+    this.port.onmessage = (event) => {
+      const msg = event.data;
+      if (!msg || typeof msg.type !== 'string') return;
+
+      if (msg.type === 'start') {
+        this.running = true;
+
+        // 시작 시 카운터 초기화
+        this.totalSamples = 0;
+        const startDelaySec =
+          typeof msg.startDelaySec === 'number' ? msg.startDelaySec : 0.05;
+        this.samplesUntilNextTick = startDelaySec * sampleRate;
+        this.idealSample = this.samplesUntilNextTick;
+        this.lastTickSample = -1;
+
+        const align = msg.align === false ? false : true;
+        if (align) {
+          this.beatIndex = 0;
+          this.barIndex = 0;
+        }
+        this.port.postMessage({ type: 'state', running: true });
+      }
+
+      if (msg.type === 'stop') {
+        this.running = false;
+        this.env = 0.0;
+        this.samplesUntilNextTick = 0;
+        this.port.postMessage({ type: 'state', running: false });
+      }
+
+      if (msg.type === 'set') {
+        const next = {
+          bpm: this._clampNumber(msg.bpm, 30, 300, this.bpm),
+          numerator: this._clampInt(msg.numerator, 1, 32, this.numerator),
+          denominator: this._clampDenominator(
+            msg.denominator,
+            this.denominator
+          ),
+          volume: this._clampNumber(msg.volume, 0, 3.0, this.volume),
+          quantize:
+            msg.quantize === 'bar' || msg.quantize === 'beat'
+              ? msg.quantize
+              : this.quantize,
+        };
+        this.pending = next;
+
+        this.port.postMessage({
+          type: 'pending',
+          pending: {
+            bpm: next.bpm,
+            numerator: next.numerator,
+            denominator: next.denominator,
+            quantize: next.quantize,
+          },
+        });
       }
     };
   }
 
-  // 오디오 렌더링 스레드에서 초당 수백 번씩 호출되는 메인 처리 루프
-  process(inputs, outputs, parameters) {
-    const output = outputs[0];
-    const channelCount = output.length;
-    const bufferSize = output[0].length; // 보통 128 샘플
+  _clampNumber(v, min, max, fallback) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
+    return Math.min(max, Math.max(min, v));
+  }
+  _clampInt(v, min, max, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
+  }
+  _clampDenominator(v, fallback) {
+    const allowed = new Set([1, 2, 4, 8, 16, 32]);
+    const n = this._clampInt(v, 1, 32, fallback);
+    return allowed.has(n) ? n : fallback;
+  }
 
-    for (let i = 0; i < bufferSize; i++) {
-      if (this.isPlaying) {
-        if (this.samplesUntilNextTick <= 0) {
-          // [핵심] 틱이 발생하는 정확한 순간에 Pending된 설정을 확정(Quantized Change)
-          this.bpm = this.nextBpm;
-          this.beatsPerBar = this.nextBeatsPerBar;
-          this.denominator = this.nextDenominator;
+  _recomputeTiming() {
+    const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
+    this.samplesPerBeat = Math.max(1, secondsPerBeat * sampleRate);
+  }
 
-          // 다음 틱까지의 간격을 오디오 샘플 단위로 정확히 계산
-          const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
-          const samplesPerBeat = secondsPerBeat * this.sampleRate;
-          this.samplesUntilNextTick += samplesPerBeat;
+  _setClickEnvelopeTimeConstant(tauSec) {
+    const tau = Math.max(0.001, tauSec);
+    this.envDecay = Math.exp(-1.0 / (tau * sampleRate));
+  }
 
-          // 클릭 사운드 에셋 세팅 (강박/약박 주파수 분리)
-          this.freq = this.currentBeatIndex === 0 ? 1000 : 800;
-          this.clickSamplesRemaining = 0.05 * this.sampleRate; // 50ms 길이의 틱
-          this.phase = 0;
+  _shouldApplyPendingAtThisBoundary() {
+    if (!this.pending) return false;
+    if (this.pending.quantize === 'beat') return true;
+    return this.beatIndex === 0;
+  }
 
-          // 시각화(UI) 동기화를 위해 메인 스레드로 현재 타임스탬프 전송
-          this.port.postMessage({
-            type: 'tick',
-            beatIndex: this.currentBeatIndex,
-            bpm: this.bpm,
-            denominator: this.denominator,
-            time: currentTime + i / this.sampleRate, // 절대적인 오디오 시스템 시간
-          });
+  _applyPending() {
+    if (!this.pending) return;
 
-          this.currentBeatIndex++;
-          if (this.currentBeatIndex >= this.beatsPerBar) {
-            this.currentBeatIndex = 0;
-          }
-        }
+    this.bpm = this.pending.bpm;
+    this.numerator = this.pending.numerator;
+    this.denominator = this.pending.denominator;
+    this.volume = this.pending.volume;
+    this.quantize = this.pending.quantize;
 
-        this.samplesUntilNextTick--;
-      }
+    this.pending = null;
+    this._recomputeTiming();
 
-      // 오실레이터 노드 없이, 프로세서 내부에서 직접 사인파(Sine Wave)를 수학적으로 합성
-      let sampleValue = 0;
-      if (this.clickSamplesRemaining > 0) {
-        sampleValue = Math.sin(this.phase) * this.volume;
+    this.port.postMessage({
+      type: 'applied',
+      applied: {
+        bpm: this.bpm,
+        numerator: this.numerator,
+        denominator: this.denominator,
+        quantize: this.quantize,
+      },
+    });
+  }
 
-        // 지수 감쇠(Exponential Decay)를 적용하여 타격감 생성
-        const envelope = this.clickSamplesRemaining / (0.05 * this.sampleRate);
-        sampleValue *= envelope * envelope;
-
-        this.phase += (2 * Math.PI * this.freq) / this.sampleRate;
-        this.clickSamplesRemaining--;
-      }
-
-      // 스테레오/모노 출력 채널에 샘플 데이터 기록
-      for (let channel = 0; channel < channelCount; channel++) {
-        output[channel][i] = sampleValue;
-      }
+  _triggerTick(exactTime, driftMs, intervalMs) {
+    if (this._shouldApplyPendingAtThisBoundary()) {
+      this._applyPending();
     }
-    return true; // 노드 활성 상태 유지
+
+    const isAccent = this.beatIndex === 0;
+    this.freq = isAccent ? this.accentFreq : 800;
+    this.env = 1.0;
+
+    // [수정됨] 틱 발생 시 계측한 Drift와 Interval을 메인 스레드로 전달
+    this.port.postMessage({
+      type: 'tick',
+      audioTime: exactTime,
+      beatIndex: this.beatIndex,
+      barIndex: this.barIndex,
+      bpm: this.bpm,
+      denominator: this.denominator,
+      numerator: this.numerator,
+      driftMs: driftMs,
+      intervalMs: intervalMs,
+    });
+
+    this.beatIndex++;
+    if (this.beatIndex >= this.numerator) {
+      this.beatIndex = 0;
+      this.barIndex++;
+    }
+  }
+
+  process(inputs, outputs) {
+    const output = outputs[0];
+    const ch0 = output[0];
+    const ch1 = output.length > 1 ? output[1] : null;
+    if (!ch0) return true;
+
+    const blockSize = ch0.length;
+
+    if (!this.running) {
+      for (let i = 0; i < blockSize; i++) {
+        ch0[i] = 0.0;
+        if (ch1) ch1[i] = 0.0;
+      }
+      return true;
+    }
+
+    let samplesToTick = this.samplesUntilNextTick;
+
+    for (let i = 0; i < blockSize; i++) {
+      let currentSample = this.totalSamples + i;
+
+      // 틱 발생 조건: 카운터가 0 이하로 떨어지는 정확한 샘플 프레임
+      if (samplesToTick <= 0) {
+        // [핵심] 오차(Drift) 계산: 현재 프레임과 수학적으로 완벽한 이상적 위치의 차이
+        let driftSamples = currentSample - this.idealSample;
+        let driftMs = (driftSamples / sampleRate) * 1000;
+
+        // 간격(Interval) 계산: 이전 틱과의 간격 (Jitter 계산용)
+        let intervalMs = 0;
+        if (this.lastTickSample !== -1) {
+          intervalMs =
+            ((currentSample - this.lastTickSample) / sampleRate) * 1000;
+        } else {
+          intervalMs = (this.samplesPerBeat / sampleRate) * 1000;
+        }
+        this.lastTickSample = currentSample;
+
+        // 틱 신호 발송
+        this._triggerTick(currentTime + i / sampleRate, driftMs, intervalMs);
+
+        // 다음 틱의 이상적인 위치 업데이트 (소수점 정밀도 유지)
+        samplesToTick += this.samplesPerBeat;
+        this.idealSample += this.samplesPerBeat;
+      }
+
+      let s = 0.0;
+      if (this.env > 1e-5) {
+        const phaseInc = 2 * Math.PI * (this.freq / sampleRate);
+        this.phase += phaseInc;
+        if (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI;
+
+        s = Math.sin(this.phase) * this.env * this.volume;
+        this.env *= this.envDecay;
+      }
+
+      ch0[i] = s;
+      if (ch1) ch1[i] = s;
+
+      samplesToTick -= 1;
+    }
+
+    // 다음 블록을 위해 상태 저장
+    this.samplesUntilNextTick = samplesToTick;
+    this.totalSamples += blockSize;
+
+    return true;
   }
 }
 
