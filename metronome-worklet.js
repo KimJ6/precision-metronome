@@ -1,5 +1,5 @@
 // metronome-worklet.js
-// AudioWorkletProcessor 기반 메트로놈 엔진 (샘플 정확도 보장 및 부동소수점 누적 오차 원천 차단)
+// AudioWorkletProcessor 기반 메트로놈 엔진 (정수+잔차 누적 Bresenham 방식 적용)
 
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -18,12 +18,20 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.beatIndex = 0;
     this.barIndex = 0;
 
-    // --- [핵심 수정됨] 틱 카운터 기반 타이밍 제어 변수 ---
-    this.totalSamples = 0;       // 시작 후 경과한 총 샘플 수
-    this.referenceSample = 0;    // 현재 템포 설정이 시작된 기준 샘플 위치
-    this.tickCounter = 0;        // 기준점 이후 발생한 틱 횟수
-    this.idealSample = 0;        // 다음 틱이 울려야 할 이상적인 절대 샘플 위치
-    this.lastTickSample = -1;    // Jitter 계산용
+    // --- [핵심 수정됨] Bresenham 타이밍 제어 변수 ---
+    this.totalSamples = 0;          // 엔진 구동 후 경과한 총 샘플 수
+    this.samplesUntilNextTick = 0;  // 다음 틱까지 남은 정수 샘플 수
+    
+    // 타이밍 계산용
+    this.exactSamplesPerBeat = 0.0; // 소수점을 포함한 정확한 1박 샘플 수
+    this.intSamplesPerBeat = 0;     // 내림 처리된 정수 샘플 수
+    this.fracSamplesPerBeat = 0.0;  // 소수점 잔차 (0.0 ~ 0.999...)
+    this.fracAcc = 0.0;             // 잔차 누적기 (Accumulator)
+
+    // 계측(Metric) 전용 변수 (정확도 증명용 수학적 기준)
+    this.referenceSample = 0; 
+    this.tickCounter = 0;
+    this.lastTickSample = -1;
 
     // 클릭 합성용 (최적화된 DSP)
     this.env = 0.0;
@@ -45,9 +53,10 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         this.totalSamples = 0;
         const startDelaySec = typeof msg.startDelaySec === 'number' ? msg.startDelaySec : 0.05;
         
-        // 시작 시 초기 기준점 설정
-        this.referenceSample = startDelaySec * sampleRate;
-        this.idealSample = this.referenceSample;
+        // 시작 지점 초기화
+        this.samplesUntilNextTick = Math.floor(startDelaySec * sampleRate);
+        this.referenceSample = this.samplesUntilNextTick;
+        this.fracAcc = 0.0;
         this.tickCounter = 0;
         this.lastTickSample = -1;
 
@@ -104,8 +113,12 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   }
 
   _recomputeTiming() {
+    // [핵심] 1박자의 샘플 수를 정수부와 소수점(잔차)부로 분리 계산
     const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
-    this.samplesPerBeat = Math.max(1, secondsPerBeat * sampleRate);
+    this.exactSamplesPerBeat = secondsPerBeat * sampleRate;
+    
+    this.intSamplesPerBeat = Math.floor(this.exactSamplesPerBeat);
+    this.fracSamplesPerBeat = this.exactSamplesPerBeat - this.intSamplesPerBeat;
   }
 
   _setClickEnvelopeTimeConstant(tauSec) {
@@ -131,13 +144,13 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.pending = null;
     this._recomputeTiming();
 
-    // [핵심] 템포 변경 시 누적 오차 방지를 위해 기준점을 현재의 이상적 위치로 재설정
-    this.referenceSample = this.idealSample;
+    // 템포 변경 시 누적 기준점 동기화
+    this.referenceSample = this.totalSamples + this.samplesUntilNextTick;
     this.tickCounter = 0;
+    this.fracAcc = 0.0;
   }
 
   _triggerTick(exactTime, driftMs, intervalMs) {
-    // 경계에서 Pending 값 적용
     if (this._shouldApplyPendingAtThisBoundary()) {
       this._applyPending();
     }
@@ -181,29 +194,42 @@ class MetronomeProcessor extends AudioWorkletProcessor {
       return true;
     }
 
+    let samplesToTick = this.samplesUntilNextTick;
+
     for (let i = 0; i < blockSize; i++) {
       let currentSample = this.totalSamples + i;
 
-      // [핵심] 틱 발생 조건: 현재 샘플이 이상적인 샘플 위치(반올림)에 도달했을 때
-      if (currentSample >= Math.round(this.idealSample)) {
+      // 정수 기반의 완벽한 틱 트리거
+      if (samplesToTick <= 0) {
         
-        let driftSamples = currentSample - this.idealSample;
+        // 오차 계측 (실제 발생한 정수 프레임 vs 수학적으로 완벽한 실수 시간)
+        let exactIdealSample = this.referenceSample + (this.tickCounter * this.exactSamplesPerBeat);
+        let driftSamples = currentSample - exactIdealSample;
         let driftMs = (driftSamples / sampleRate) * 1000;
 
         let intervalMs = 0;
         if (this.lastTickSample !== -1) {
           intervalMs = ((currentSample - this.lastTickSample) / sampleRate) * 1000;
         } else {
-          intervalMs = (this.samplesPerBeat / sampleRate) * 1000;
+          intervalMs = (this.exactSamplesPerBeat / sampleRate) * 1000;
         }
         this.lastTickSample = currentSample;
 
-        // 틱 신호 발송
+        // 틱 발송
         this._triggerTick(currentTime + i / sampleRate, driftMs, intervalMs);
 
-        // [핵심] 부동소수점 덧셈 누적 대신, 곱셈으로 계산하여 장시간 구동 시 오차 원천 방지
+        // [핵심] Bresenham 잔차 누적 방식 다음 틱 스케줄링
+        let nextInterval = this.intSamplesPerBeat;
+        this.fracAcc += this.fracSamplesPerBeat;
+        
+        // 누적된 잔차가 1.0(1샘플)을 넘어가면 인터벌에 1샘플을 추가 보상하고 잔차 차감
+        if (this.fracAcc >= 1.0) {
+          nextInterval += 1;
+          this.fracAcc -= 1.0;
+        }
+
+        samplesToTick += nextInterval;
         this.tickCounter++;
-        this.idealSample = this.referenceSample + (this.tickCounter * this.samplesPerBeat);
       }
 
       let s = 0.0;
@@ -218,8 +244,11 @@ class MetronomeProcessor extends AudioWorkletProcessor {
 
       ch0[i] = s;
       if (ch1) ch1[i] = s;
+
+      samplesToTick -= 1;
     }
 
+    this.samplesUntilNextTick = samplesToTick;
     this.totalSamples += blockSize;
 
     return true;
