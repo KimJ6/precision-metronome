@@ -1,274 +1,379 @@
 <!DOCTYPE html>
 <html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>정밀 하드웨어 메트로놈</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color: #1a1a1a;
-      color: #ffffff;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      padding: 20px 0; 
-      box-sizing: border-box;
-      gap: 20px;
-    }
-
-    /* --- [수정됨] 광고 배너 (현재는 숨김 처리) --- */
-    .ad-banner {
-      display: none; /* 진짜 광고를 넣을 때 이 부분을 display: flex; 로 변경하세요 */
-      width: 100%;
-      max-width: 728px; 
-      height: 90px;     
-      background-color: #222;
-      border: 1px dashed #555;
-      border-radius: 8px;
-      align-items: center;
-      justify-content: center;
-      color: #666;
-      font-size: 14px;
-      box-sizing: border-box;
-      width: calc(100% - 40px);
-    }
-    
-    .controls {
-      background: #2a2a2a;
-      padding: 25px;
-      border-radius: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      width: 400px; 
-      max-width: calc(100% - 40px); 
-      box-sizing: border-box;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-    }
-    
-    .control-group {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 18px;
-    }
-
-    .input-slider-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-grow: 1;
-      margin-left: 10px;
-    }
-    
-    .number-input {
-      padding: 6px;
-      font-size: 16px;
-      text-align: center;
-      border-radius: 4px;
-      border: 1px solid #555;
-      background: #333;
-      color: white;
-      outline: none;
-    }
-    .number-input:focus {
-      border-color: #4CAF50;
-    }
-    input[type="number"]::-webkit-inner-spin-button,
-    input[type="number"]::-webkit-outer-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-
-    #bpm-input, #volume-input { width: 45px; font-weight: bold; }
-    
-    input[type=range] {
-      flex-grow: 1;
-      height: 6px;
-      cursor: pointer;
-      margin: 0 5px;
-      min-width: 50px; /* 모바일에서 슬라이더가 더 유연하게 줄어들게 조정 */
-    }
-
-    .stepper {
-      display: flex;
-      align-items: center;
-      background: #333;
-      border: 1px solid #555;
-      border-radius: 6px;
-      overflow: hidden; 
-    }
-
-    .stepper .number-input {
-      border: none;
-      border-radius: 0;
-      width: 32px;
-      height: 28px;
-      background: transparent;
-      padding: 0;
-    }
-
-    .step-btn {
-      padding: 0;
-      width: 30px;
-      height: 28px;
-      font-size: 18px;
-      font-weight: bold;
-      background-color: #444;
-      color: white;
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.1s;
-    }
-    
-    .step-btn:hover { background-color: #666; }
-    .step-btn:active { background-color: #4CAF50; }
-
-    button.main-btn {
-      padding: 12px 24px;
-      font-size: 18px;
-      font-weight: bold;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      background-color: #4CAF50;
-      color: white;
-      transition: background 0.2s;
-    }
-    
-    button.stop {
-      background-color: #f44336;
-    }
-    
-    select {
-      padding: 8px 12px;
-      font-size: 18px;
-      border-radius: 4px;
-      cursor: pointer;
-      background: #fff;
-      color: #000;
-      font-weight: bold;
-    }
-    
-    .time-signature-group {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    
-    #beat-numerator {
-      width: 45px;
-      font-weight: bold;
-      font-size: 18px;
-    }
-    
-    #canvas-container {
-      border: 2px solid #333;
-      border-radius: 12px;
-      overflow: hidden;
-      background: #222;
-      width: 400px;
-      max-width: calc(100% - 40px); 
-      box-sizing: border-box;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    /* --- [추가됨] 캔버스 내부가 모바일 비율에 맞춰지도록 조정 --- */
-    #canvas-container canvas {
-      width: 100% !important;
-      height: auto !important;
-      display: block;
-    }
-    
-    .lookahead-ui {
-      font-size: 14px;
-      color: #888;
-      text-align: right;
-      height: 18px;
-    }
-
-    /* --- [추가됨] 모바일 화면(480px 이하) 반응형 디자인 --- */
-    @media (max-width: 480px) {
-      .control-group {
-        flex-direction: column; /* 라벨과 입력칸을 위아래로 배치 */
-        align-items: flex-start; /* 좌측 정렬 */
-        gap: 12px;
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>정밀 하드웨어 메트로놈</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #1a1a1a;
+        color: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 20px 0;
+        box-sizing: border-box;
+        gap: 20px;
       }
-      .input-slider-group {
-        margin-left: 0;
-        width: 100%; /* 좌우 공간을 꽉 채우기 */
-      }
-      .time-signature-group {
+
+      .ad-banner {
+        display: none;
         width: 100%;
-        justify-content: flex-start;
+        max-width: 728px;
+        height: 90px;
+        background-color: #222;
+        border: 1px dashed #555;
+        border-radius: 8px;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 14px;
+        box-sizing: border-box;
+        width: calc(100% - 40px);
       }
-    }
-  </style>
-</head>
-<body>
 
-  <div class="ad-banner" id="ad-top">
-    [상단 배너 광고 영역 - 728x90]
-  </div>
+      .controls {
+        background: #2a2a2a;
+        padding: 25px;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        width: 400px;
+        max-width: calc(100% - 40px);
+        box-sizing: border-box;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+      }
 
-  <div class="controls">
-    <div class="control-group" style="flex-direction: row; align-items: center;">
-      <button id="play-btn" class="main-btn">Play</button>
-      <div class="lookahead-ui" id="status-text">Ready</div>
-    </div>
-    
-    <div class="control-group">
-      <label>VOLUME</label>
-      <div class="input-slider-group">
-        <input type="number" id="volume-input" class="number-input" min="0" max="300" value="100" title="볼륨 입력">
-        <input type="range" id="volume-slider" min="0" max="300" value="100">
+      .control-group {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 18px;
+      }
+
+      .input-slider-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-grow: 1;
+        margin-left: 10px;
+      }
+
+      .number-input {
+        padding: 6px;
+        font-size: 16px;
+        text-align: center;
+        border-radius: 4px;
+        border: 1px solid #555;
+        background: #333;
+        color: white;
+        outline: none;
+      }
+      .number-input:focus {
+        border-color: #4caf50;
+      }
+      input[type='number']::-webkit-inner-spin-button,
+      input[type='number']::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+
+      #bpm-input,
+      #volume-input {
+        width: 45px;
+        font-weight: bold;
+      }
+
+      input[type='range'] {
+        flex-grow: 1;
+        height: 6px;
+        cursor: pointer;
+        margin: 0 5px;
+        min-width: 50px;
+      }
+
+      .stepper {
+        display: flex;
+        align-items: center;
+        background: #333;
+        border: 1px solid #555;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      .stepper .number-input {
+        border: none;
+        border-radius: 0;
+        width: 32px;
+        height: 28px;
+        background: transparent;
+        padding: 0;
+      }
+
+      .step-btn {
+        padding: 0;
+        width: 30px;
+        height: 28px;
+        font-size: 18px;
+        font-weight: bold;
+        background-color: #444;
+        color: white;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.1s;
+      }
+
+      .step-btn:hover {
+        background-color: #666;
+      }
+      .step-btn:active {
+        background-color: #4caf50;
+      }
+
+      button.main-btn {
+        padding: 12px 24px;
+        font-size: 18px;
+        font-weight: bold;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        background-color: #4caf50;
+        color: white;
+        transition: background 0.2s;
+      }
+
+      button.stop {
+        background-color: #f44336;
+      }
+
+      select {
+        padding: 8px 12px;
+        font-size: 18px;
+        border-radius: 4px;
+        cursor: pointer;
+        background: #fff;
+        color: #000;
+        font-weight: bold;
+      }
+
+      .time-signature-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      #beat-numerator {
+        width: 45px;
+        font-weight: bold;
+        font-size: 18px;
+      }
+
+      #canvas-container {
+        border: 2px solid #333;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #222;
+        width: 400px;
+        max-width: calc(100% - 40px);
+        box-sizing: border-box;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      #canvas-container canvas {
+        width: 100% !important;
+        height: auto !important;
+        display: block;
+      }
+
+      .lookahead-ui {
+        font-size: 14px;
+        color: #888;
+        text-align: right;
+        height: 18px;
+      }
+
+      /* --- [추가됨] 화면 꺼짐 방지 토글 컨테이너 및 스위치 스타일 --- */
+      .toggle-container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 400px;
+        max-width: calc(100% - 40px);
+        background: #2a2a2a;
+        padding: 15px 25px;
+        border-radius: 12px;
+        box-sizing: border-box;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        font-size: 16px;
+        font-weight: bold;
+      }
+
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 46px;
+        height: 24px;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #555;
+        transition: 0.4s;
+        border-radius: 24px;
+      }
+      .slider:before {
+        position: absolute;
+        content: '';
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.4s;
+        border-radius: 50%;
+      }
+      input:checked + .slider {
+        background-color: #4caf50;
+      }
+      input:checked + .slider:before {
+        transform: translateX(22px);
+      }
+
+      @media (max-width: 480px) {
+        .control-group {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .input-slider-group {
+          margin-left: 0;
+          width: 100%;
+        }
+        .time-signature-group {
+          width: 100%;
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ad-banner" id="ad-top">[상단 배너 광고 영역 - 728x90]</div>
+
+    <div class="controls">
+      <div
+        class="control-group"
+        style="flex-direction: row; align-items: center"
+      >
+        <button id="play-btn" class="main-btn">Play</button>
+        <div class="lookahead-ui" id="status-text">Ready</div>
       </div>
-    </div>
 
-    <div class="control-group">
-      <label>BPM</label>
-      <div class="input-slider-group">
-        <input type="number" id="bpm-input" class="number-input" min="30" max="300" value="60" title="BPM 입력">
-        <input type="range" id="bpm-slider" min="30" max="300" value="60">
-        
-        <div class="stepper">
-          <button id="bpm-down" class="step-btn">-</button>
-          <input type="number" id="step-input" class="number-input" min="1" max="50" value="10" title="증감 단위(n)">
-          <button id="bpm-up" class="step-btn">+</button>
+      <div class="control-group">
+        <label>VOLUM:</label>
+        <div class="input-slider-group">
+          <input
+            type="number"
+            id="volume-input"
+            class="number-input"
+            min="0"
+            max="300"
+            value="100"
+            title="볼륨 입력"
+          />
+          <input
+            type="range"
+            id="volume-slider"
+            min="0"
+            max="300"
+            value="100"
+          />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label>BPM</label>
+        <div class="input-slider-group">
+          <input
+            type="number"
+            id="bpm-input"
+            class="number-input"
+            min="30"
+            max="300"
+            value="60"
+            title="BPM 입력"
+          />
+          <input type="range" id="bpm-slider" min="30" max="300" value="60" />
+
+          <div class="stepper">
+            <button id="bpm-down" class="step-btn">-</button>
+            <input
+              type="number"
+              id="step-input"
+              class="number-input"
+              min="1"
+              max="50"
+              value="10"
+              title="증감 단위(n)"
+            />
+            <button id="bpm-up" class="step-btn">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label>Time Signature</label>
+        <div class="time-signature-group">
+          <input
+            type="number"
+            id="beat-numerator"
+            class="number-input"
+            min="1"
+            max="32"
+            value="4"
+            title="한 마디의 박자 수 (n)"
+          />
+          <span style="font-size: 24px; font-weight: bold">/</span>
+          <select id="beat-denominator">
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+          </select>
         </div>
       </div>
     </div>
 
-    <div class="control-group">
-      <label>Time Signature</label>
-      <div class="time-signature-group">
-        <input type="number" id="beat-numerator" class="number-input" min="1" max="32" value="4" title="한 마디의 박자 수 (n)">
-        <span style="font-size: 24px; font-weight: bold;">/</span>
-        <select id="beat-denominator">
-          <option value="4" selected>4</option>
-          <option value="8">8</option>
-          <option value="16">16</option>
-        </select>
-      </div>
+    <div id="canvas-container"></div>
+
+    <div class="toggle-container">
+      <label for="keep-awake-toggle">Keep Display Awake</label>
+      <label class="switch">
+        <input type="checkbox" id="keep-awake-toggle" />
+        <span class="slider"></span>
+      </label>
     </div>
-  </div>
 
-  <div id="canvas-container"></div>
+    <div class="ad-banner" id="ad-bottom">[하단 배너 광고 영역 - 728x90]</div>
 
-  <div class="ad-banner" id="ad-bottom">
-    [하단 배너 광고 영역 - 728x90]
-  </div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <script type="module" src="/app.js"></script>
-</body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
 </html>

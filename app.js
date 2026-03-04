@@ -4,6 +4,7 @@
 let audioContext = null;
 let worker = null;
 let isPlaying = false;
+let wakeLock = null; // [추가됨] 화면 꺼짐 방지 잠금 객체
 
 let currentVolume = 1.0;
 let currentBPM = 60;
@@ -41,10 +42,10 @@ const stepInput = document.getElementById('step-input');
 const beatNumerator = document.getElementById('beat-numerator');
 const beatDenominator = document.getElementById('beat-denominator');
 const statusText = document.getElementById('status-text');
+const keepAwakeToggle = document.getElementById('keep-awake-toggle'); // [추가됨] 화면 꺼짐 방지 토글
 
 // --- 상태 업데이트 함수 ---
 function updateVolume(newVolume) {
-  // 한계치를 300으로 늘려 3.0배 증폭을 허용
   newVolume = Math.max(0, Math.min(300, newVolume));
   volumeInput.value = newVolume;
   volumeSlider.value = newVolume;
@@ -64,6 +65,33 @@ function updateTimeSignature() {
   if (isNaN(n) || n < 1) n = 1;
   beatsPerBar = n;
   currentDenominator = parseInt(beatDenominator.value);
+}
+
+// --- [추가됨] 화면 꺼짐 방지(Wake Lock) 제어 함수 ---
+async function toggleWakeLock() {
+  if (keepAwakeToggle.checked) {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake Lock 활성화됨');
+      } catch (err) {
+        console.error(`Wake Lock 요청 실패: ${err.name}, ${err.message}`);
+        keepAwakeToggle.checked = false; // 실패 시 토글 원복
+      }
+    } else {
+      alert(
+        '사용 중인 브라우저에서는 화면 꺼짐 방지 기능을 지원하지 않습니다.'
+      );
+      keepAwakeToggle.checked = false;
+    }
+  } else {
+    if (wakeLock !== null) {
+      wakeLock.release().then(() => {
+        wakeLock = null;
+        console.log('Wake Lock 해제됨');
+      });
+    }
+  }
 }
 
 // --- 이벤트 리스너 ---
@@ -98,6 +126,9 @@ playBtn.addEventListener('click', () => {
   if (!isPlaying) startMetronome();
   else stopMetronome();
 });
+
+// 화면 꺼짐 방지 토글 이벤트 연결
+keepAwakeToggle.addEventListener('change', toggleWakeLock);
 
 // --- 핵심 로직: 오디오 스케줄링 ---
 function startMetronome() {
@@ -197,15 +228,28 @@ function scheduler() {
   }
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && isPlaying && audioContext) {
-    const currentTime = audioContext.currentTime;
-    while (noteQueue.length > 0 && noteQueue[0].noteTime < currentTime) {
-      let pastNote = noteQueue.shift();
-      visualState.lastBeatTime = pastNote.noteTime;
-      visualState.currentBeatIndex = pastNote.beatIndex;
-      visualState.duration =
-        (60.0 / pastNote.bpm) * (4.0 / pastNote.denominator);
+// 화면 백그라운드 전환/복귀 대응 (시각화 동기화 및 Wake Lock 복원)
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    // 1. 오디오-비주얼 동기화
+    if (isPlaying && audioContext) {
+      const currentTime = audioContext.currentTime;
+      while (noteQueue.length > 0 && noteQueue[0].noteTime < currentTime) {
+        let pastNote = noteQueue.shift();
+        visualState.lastBeatTime = pastNote.noteTime;
+        visualState.currentBeatIndex = pastNote.beatIndex;
+        visualState.duration =
+          (60.0 / pastNote.bpm) * (4.0 / pastNote.denominator);
+      }
+    }
+
+    // 2. 화면 꺼짐 방지 토글이 켜져있었다면 OS에 의해 풀린 Lock을 재요청
+    if (keepAwakeToggle.checked && 'wakeLock' in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+      } catch (err) {
+        console.error(`Wake Lock 자동 복구 실패: ${err.message}`);
+      }
     }
   }
 });
@@ -248,6 +292,26 @@ window.draw = function () {
 
   translate(width / 2, height - 40);
 
+  // --- [추가됨] 양 끝 도달 지점 하얀색 기준선 표시 ---
+  push();
+  stroke(255); // 흰색
+  strokeWeight(4); // 선 두께
+
+  // 좌측 한계선 (-45도)
+  push();
+  rotate(-maxAngle);
+  line(0, -215, 0, -225);
+  pop();
+
+  // 우측 한계선 (+45도)
+  push();
+  rotate(maxAngle);
+  line(0, -215, 0, -225);
+  pop();
+  pop();
+  // ---------------------------------------------------
+
+  // 중앙 빨간 삼각형 표시기
   push();
   noStroke();
   fill(255, 50, 50);
