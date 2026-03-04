@@ -125,7 +125,7 @@ async function ensureAudio() {
   if (audioContext.state === 'suspended') await audioContext.resume();
 
   if (!metronomeNode) {
-    await audioContext.audioWorklet.addModule('./metronome-worklet.js');
+    await audioContext.audioWorklet.addModule(new URL('./metronome-worklet.js', import.meta.url));
 
     metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor', {
       numberOfInputs: 0,
