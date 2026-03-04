@@ -417,7 +417,7 @@ window.draw = function () {
   text(val2, rightValueX, height - 15);
 
   let leftColonX = 65;  
-  let leftValueX = 150; 
+  let leftValueX = 140; 
 
   fill(100);
   textSize(11);
