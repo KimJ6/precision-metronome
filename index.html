@@ -43,7 +43,7 @@
         display: flex;
         flex-direction: column;
         gap: 20px;
-        width: 400px;
+        width: 440px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
       }
@@ -52,48 +52,67 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+      }
+
+      /* 라벨 텍스트 사이즈를 수치 입력칸과 동일한 18px로 통일 */
+      .control-group label,
+      .toggle-container label {
         font-size: 18px;
+        font-weight: bold;
+        color: #ffffff;
+        white-space: nowrap;
+      }
+
+      /* 글자가 18px로 커진 만큼 너비를 75px -> 85px로 늘려 정렬 기준 유지 */
+      .slider-label {
+        width: 85px;
+        flex-shrink: 0;
       }
 
       .input-slider-group {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 12px;
         flex-grow: 1;
-        margin-left: 10px;
       }
 
+      input[type='range'] {
+        flex-grow: 1;
+        width: 10px;
+        height: 6px;
+        cursor: pointer;
+        margin: 0;
+      }
+
+      /* 수치 입력칸 (18px) */
       .number-input {
-        padding: 6px;
-        font-size: 16px;
+        height: 38px;
+        font-size: 18px;
+        font-weight: bold;
         text-align: center;
         border-radius: 4px;
         border: 1px solid #555;
         background: #333;
         color: white;
         outline: none;
+        box-sizing: border-box;
       }
       .number-input:focus {
         border-color: #4caf50;
       }
+
       input[type='number']::-webkit-inner-spin-button,
       input[type='number']::-webkit-outer-spin-button {
         -webkit-appearance: none;
         margin: 0;
       }
 
+      #volume-input,
       #bpm-input,
-      #volume-input {
-        width: 45px;
-        font-weight: bold;
-      }
-
-      input[type='range'] {
-        flex-grow: 1;
-        height: 6px;
-        cursor: pointer;
-        margin: 0 5px;
-        min-width: 50px;
+      #beat-numerator,
+      #beat-denominator {
+        width: 64px;
+        flex-shrink: 0;
       }
 
       .stepper {
@@ -103,21 +122,26 @@
         border: 1px solid #555;
         border-radius: 6px;
         overflow: hidden;
+        height: 38px;
+        box-sizing: border-box;
+        flex-shrink: 0;
       }
 
+      /* Stepper 안의 단위 숫자는 좁은 공간을 위해 살짝 작게 유지 (16px) */
       .stepper .number-input {
         border: none;
         border-radius: 0;
         width: 32px;
-        height: 28px;
+        height: 100%;
         background: transparent;
         padding: 0;
+        font-size: 16px;
       }
 
       .step-btn {
         padding: 0;
         width: 30px;
-        height: 28px;
+        height: 100%;
         font-size: 18px;
         font-weight: bold;
         background-color: #444;
@@ -159,8 +183,8 @@
       }
 
       .play-stop-btn svg {
-        width: 34px;
-        height: 34px;
+        width: 36px;
+        height: 36px;
         fill: currentColor;
       }
 
@@ -168,16 +192,37 @@
         margin-left: 0;
       }
 
+      .app-title {
+        font-weight: 800;
+        font-size: 20px;
+        letter-spacing: -0.5px;
+        color: #ffffff;
+        white-space: nowrap;
+      }
+      .app-title .red-t {
+        color: #f44336;
+      }
+
+      .time-signature-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-grow: 1;
+        justify-content: flex-end;
+      }
+
       select {
-        padding: 8px 12px;
+        height: 38px;
         font-size: 18px;
+        font-weight: bold;
         border-radius: 4px;
         border: 1px solid #555;
         cursor: pointer;
         background: #333;
         color: #ffffff;
-        font-weight: bold;
         outline: none;
+        box-sizing: border-box;
+        text-align: center;
       }
       select:focus {
         border-color: #4caf50;
@@ -187,24 +232,12 @@
         color: #ffffff;
       }
 
-      .time-signature-group {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      #beat-numerator {
-        width: 45px;
-        font-weight: bold;
-        font-size: 18px;
-      }
-
       #canvas-container {
         border: 2px solid #333;
         border-radius: 12px;
         overflow: hidden;
         background: #222;
-        width: 400px;
+        width: 440px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
         display: flex;
@@ -229,14 +262,12 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        width: 400px;
+        width: 440px;
         max-width: calc(100% - 40px);
         background: #2a2a2a;
         padding: 15px 25px;
         border-radius: 12px;
         box-sizing: border-box;
-        font-size: 16px;
-        font-weight: bold;
       }
 
       .switch {
@@ -283,7 +314,7 @@
         font-size: 12px;
         color: #999;
         text-align: center;
-        width: 400px;
+        width: 440px;
         max-width: calc(100% - 40px);
         margin-top: -5px;
         line-height: 1.5;
@@ -302,13 +333,13 @@
           align-items: flex-start;
           gap: 12px;
         }
-        .input-slider-group {
+        .slider-label {
+          width: auto;
+        }
+        .input-slider-group,
+        .time-signature-group {
           margin-left: 0;
           width: 100%;
-        }
-        .time-signature-group {
-          width: 100%;
-          justify-content: flex-start;
         }
         .play-row {
           flex-direction: row !important;
@@ -333,6 +364,7 @@
             <path d="M5 5h14v14H5z" />
           </svg>
         </button>
+        <div class="app-title">Precision<span class="red-t">T</span>ick</div>
         <div
           class="lookahead-ui"
           id="status-text"
@@ -343,8 +375,15 @@
       </div>
 
       <div class="control-group">
-        <label>VOLUME</label>
+        <label class="slider-label">VOLUME</label>
         <div class="input-slider-group">
+          <input
+            type="range"
+            id="volume-slider"
+            min="0"
+            max="300"
+            value="100"
+          />
           <input
             type="number"
             id="volume-input"
@@ -354,30 +393,13 @@
             value="100"
             title="볼륨 입력"
           />
-          <input
-            type="range"
-            id="volume-slider"
-            min="0"
-            max="300"
-            value="100"
-          />
         </div>
       </div>
 
       <div class="control-group">
-        <label>BPM</label>
+        <label class="slider-label">BPM</label>
         <div class="input-slider-group">
-          <input
-            type="number"
-            id="bpm-input"
-            class="number-input"
-            min="30"
-            max="300"
-            value="60"
-            title="BPM 입력"
-          />
           <input type="range" id="bpm-slider" min="30" max="300" value="60" />
-
           <div class="stepper">
             <button id="bpm-down" class="step-btn">-</button>
             <input
@@ -391,6 +413,15 @@
             />
             <button id="bpm-up" class="step-btn">+</button>
           </div>
+          <input
+            type="number"
+            id="bpm-input"
+            class="number-input"
+            min="30"
+            max="300"
+            value="60"
+            title="BPM 입력"
+          />
         </div>
       </div>
 
@@ -404,7 +435,7 @@
             min="1"
             max="32"
             value="4"
-            title="한 마디의 박자 수 (n)"
+            title="한 마디 박자 수"
           />
           <span style="font-size: 24px; font-weight: bold">/</span>
           <select id="beat-denominator">
@@ -428,19 +459,17 @@
 
     <div class="info-text">
       <p>
-        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br />
-        <span class="en-text"
+        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br /><span
+          class="en-text"
           >Settings changes are applied from the first downbeat of the next
           bar.</span
         >
       </p>
       <p>
         Jitter / Drift는 오디오 엔진의 타이밍 안정도를 나타내는 내부 계산
-        값이며, 실제 기기의 출력 레이턴시는 반영되지 않을 수 있습니다.<br />
-        <span class="en-text"
+        값입니다.<br /><span class="en-text"
           >Jitter and Drift are internally calculated values representing the
-          audio engine's timing stability, and may not reflect actual device
-          output latency.</span
+          audio engine's timing stability.</span
         >
       </p>
     </div>

@@ -1,41 +1,53 @@
+// AudioWorkletProcessor 기반 메트로놈 엔진
+// - SampleClock(샘플 단위 카운터) 기반 tick
+// - Bresenham(정수+잔차 누적) 스케줄링으로 비정수 박 길이 장기 평균 정확도 확보
+// - Quantize 정책은 "엔진 모드(this.quantize)"가 소유 (pending에 quantize를 섞지 않음)
+// - Stop은 오디오/스케줄만 멈추고, 지표(틱 카운트)는 start에서 세션 기준으로 초기화
+
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
     this.running = false;
 
-    // 활성 설정
+    // Active params
     this.bpm = 60;
     this.numerator = 4;
     this.denominator = 4;
     this.volume = 1.0;
+
+    // Quantize mode is an engine policy (NOT part of pending)
+    // 'bar' = next bar downbeat, 'beat' = next beat
     this.quantize = 'bar';
+
+    // Pending params (applied at quantized boundary)
     this.pending = null;
 
+    // Beat/bar counters
     this.beatIndex = 0;
     this.barIndex = 0;
 
-    // 절대 샘플 카운터 (리셋 금지)
+    // Absolute sample counter (never reset)
     this.totalSamples = 0;
 
-    // 다음 틱까지 남은 샘플(정수 카운터)
+    // Countdown to next tick in samples
     this.samplesUntilNextTick = 0;
 
-    // 타이밍(박당 샘플 수) 계산용
+    // Timing (samples/beat)
     this.exactSamplesPerBeat = 0.0;
     this.intSamplesPerBeat = 0;
     this.fracSamplesPerBeat = 0.0;
     this.fracAcc = 0.0;
 
-    // 계측(내부 기준)용
-    this.referenceSample = 0; // 드리프트 기준점(정수 샘플)
-    this.tickCounter = 0; // 기준점 이후 틱 카운트
-    this.lastTickSample = -1; // interval 계산용
+    // Metrics (engine-internal)
+    this.referenceSample = 0;
+    this.tickCounter = 0;
+    this.lastTickSample = -1;
 
-    // start 시 referenceSample을 “첫 틱 발생 샘플”로 확정하기 위한 플래그
+    // Start reference latch
     this.needStartReference = false;
 
-    // 클릭 합성(DSP)
+    // Click synth
     this.env = 0.0;
     this.envDecay = 0.0;
     this.phase = 0.0;
@@ -55,38 +67,39 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         const startDelaySec =
           typeof msg.startDelaySec === 'number' ? msg.startDelaySec : 0.05;
 
-        // totalSamples는 건드리지 않음
+        // Do NOT reset totalSamples (absolute timeline must keep flowing)
         this.samplesUntilNextTick = Math.max(
           0,
           Math.floor(startDelaySec * sampleRate)
         );
 
-        // 계측/잔차 초기화
+        // Reset session metrics (start defines a new measurement session)
         this.fracAcc = 0.0;
         this.tickCounter = 0;
         this.lastTickSample = -1;
-
-        // start 기준점(referenceSample)은 “첫 틱이 실제로 발생한 샘플”에서 확정
         this.needStartReference = true;
 
-        const align = msg.align === false ? false : true;
-        if (align) {
+        if (msg.align !== false) {
           this.beatIndex = 0;
           this.barIndex = 0;
         }
 
         this.port.postMessage({ type: 'state', running: true });
+        return;
       }
 
       if (msg.type === 'stop') {
+        // Stop = silence + stop scheduling (metrics will reset on next start)
         this.running = false;
         this.env = 0.0;
-        // 정지 시 잠재적 버그를 막기 위해 스케줄링 카운터 명시적 초기화
         this.samplesUntilNextTick = 0;
+
         this.port.postMessage({ type: 'state', running: false });
+        return;
       }
 
       if (msg.type === 'set') {
+        // Pending excludes quantize policy: quantize is owned by engine (this.quantize)
         const next = {
           bpm: this._clampNumber(msg.bpm, 30, 300, this.bpm),
           numerator: this._clampInt(msg.numerator, 1, 32, this.numerator),
@@ -95,29 +108,24 @@ class MetronomeProcessor extends AudioWorkletProcessor {
             this.denominator
           ),
           volume: this._clampNumber(msg.volume, 0, 3.0, this.volume),
-          quantize:
-            msg.quantize === 'bar' || msg.quantize === 'beat'
-              ? msg.quantize
-              : this.quantize,
         };
-        this.pending = next;
 
+        // Optional: allow changing quantize mode explicitly (engine policy)
+        if (msg.quantize === 'bar' || msg.quantize === 'beat') {
+          this.quantize = msg.quantize;
+        }
+
+        this.pending = next;
         this.port.postMessage({
           type: 'pending',
-          pending: {
-            bpm: next.bpm,
-            numerator: next.numerator,
-            denominator: next.denominator,
-            quantize: next.quantize,
-          },
+          pending: next,
+          quantize: this.quantize,
         });
+        return;
       }
     };
   }
 
-  // --------------------
-  // Utils
-  // --------------------
   _clampNumber(v, min, max, fallback) {
     if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
     return Math.min(max, Math.max(min, v));
@@ -139,7 +147,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
     this.exactSamplesPerBeat = Math.max(1e-9, secondsPerBeat * sampleRate);
 
-    // Bresenham 분해
     this.intSamplesPerBeat = Math.max(1, Math.floor(this.exactSamplesPerBeat));
     this.fracSamplesPerBeat = this.exactSamplesPerBeat - this.intSamplesPerBeat;
   }
@@ -151,12 +158,12 @@ class MetronomeProcessor extends AudioWorkletProcessor {
 
   _shouldApplyPendingAtThisBoundary() {
     if (!this.pending) return false;
-    if (this.pending.quantize === 'beat') return true;
-    // bar: 마디 첫 강박에서만
+    if (this.quantize === 'beat') return true;
+    // 'bar' mode: apply only at downbeat
     return this.beatIndex === 0;
   }
 
-  // pending 적용(정확한 틱 샘플 인덱스를 기준점으로) 및 성공 여부 반환
+  // Returns boolean: applied or not
   _applyPending(currentSample) {
     if (!this.pending) return false;
 
@@ -164,12 +171,12 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.numerator = this.pending.numerator;
     this.denominator = this.pending.denominator;
     this.volume = this.pending.volume;
-    this.quantize = this.pending.quantize;
 
     this.pending = null;
+
     this._recomputeTiming();
 
-    // 새 템포의 기준점은 “바로 지금 틱이 발생한 샘플”
+    // Reset measurement reference at the exact tick sample
     this.referenceSample = currentSample;
     this.tickCounter = 0;
     this.fracAcc = 0.0;
@@ -178,8 +185,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   }
 
   _triggerTick(exactTime, driftMs, intervalMs, appliedPending) {
-    const isAccent = this.beatIndex === 0;
-    this.freq = isAccent ? this.accentFreq : 800;
+    this.freq = this.beatIndex === 0 ? this.accentFreq : 800;
     this.env = 1.0;
 
     this.port.postMessage({
@@ -192,7 +198,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
       numerator: this.numerator,
       driftMs,
       intervalMs,
-      appliedPending, // 지터 스파이크 방지 및 UI 갱신용 플래그
+      appliedPending,
     });
 
     this.beatIndex++;
@@ -202,9 +208,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     }
   }
 
-  // --------------------
-  // Audio loop
-  // --------------------
   process(inputs, outputs) {
     const output = outputs[0];
     const ch0 = output[0];
@@ -218,7 +221,8 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         ch0[i] = 0.0;
         if (ch1) ch1[i] = 0.0;
       }
-      this.totalSamples += blockSize; // 정지 상태에서도 절대 시간은 흐름
+      // Absolute timeline keeps flowing even when stopped
+      this.totalSamples += blockSize;
       return true;
     }
 
@@ -228,7 +232,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
       const currentSample = this.totalSamples + i;
 
       if (samplesToTick <= 0) {
-        // (1) start 직후 첫 틱에서 referenceSample 확정
+        // Establish session reference at the first actual tick after start
         if (this.needStartReference) {
           this.referenceSample = currentSample;
           this.tickCounter = 0;
@@ -236,28 +240,26 @@ class MetronomeProcessor extends AudioWorkletProcessor {
           this.needStartReference = false;
         }
 
-        // (2) Quantized change: 틱 직전에 pending 적용 및 실제 적용 여부 획득 (원자성 보장)
+        // Quantized commit
         let appliedPending = false;
         if (this._shouldApplyPendingAtThisBoundary()) {
           appliedPending = this._applyPending(currentSample);
         }
 
-        // (3) 계측(내부 기준)
+        // Metrics (engine-internal)
         const exactIdealSample =
           this.referenceSample + this.tickCounter * this.exactSamplesPerBeat;
-        const driftSamples = currentSample - exactIdealSample;
-        const driftMs = (driftSamples / sampleRate) * 1000.0;
+        const driftMs =
+          ((currentSample - exactIdealSample) / sampleRate) * 1000.0;
 
-        let intervalMs = 0.0;
-        if (this.lastTickSample !== -1) {
-          intervalMs =
-            ((currentSample - this.lastTickSample) / sampleRate) * 1000.0;
-        } else {
-          intervalMs = (this.exactSamplesPerBeat / sampleRate) * 1000.0;
-        }
+        const intervalMs =
+          this.lastTickSample !== -1
+            ? ((currentSample - this.lastTickSample) / sampleRate) * 1000.0
+            : (this.exactSamplesPerBeat / sampleRate) * 1000.0;
+
         this.lastTickSample = currentSample;
 
-        // (4) 틱 메시지 + 클릭 시작
+        // Emit tick
         this._triggerTick(
           currentTime + i / sampleRate,
           driftMs,
@@ -265,7 +267,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
           appliedPending
         );
 
-        // (5) 다음 틱까지 샘플 수(Bresenham)
+        // Bresenham scheduling (integer + residual accumulation)
         let nextInterval = this.intSamplesPerBeat;
         this.fracAcc += this.fracSamplesPerBeat;
         if (this.fracAcc >= 1.0) {
@@ -273,16 +275,14 @@ class MetronomeProcessor extends AudioWorkletProcessor {
           this.fracAcc -= 1.0;
         }
 
-        // 누적 방식으로 다음 틱 예약
         samplesToTick += nextInterval;
         this.tickCounter++;
       }
 
-      // 클릭 합성
+      // Click synth
       let s = 0.0;
       if (this.env > 1e-5) {
-        const phaseInc = 2 * Math.PI * (this.freq / sampleRate);
-        this.phase += phaseInc;
+        this.phase += 2 * Math.PI * (this.freq / sampleRate);
         if (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI;
 
         s = Math.sin(this.phase) * this.env * this.volume;
@@ -297,7 +297,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
 
     this.samplesUntilNextTick = samplesToTick;
     this.totalSamples += blockSize;
-
     return true;
   }
 }
