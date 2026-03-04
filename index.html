@@ -274,7 +274,7 @@
         text-align: center;
         width: 400px;
         max-width: calc(100% - 40px);
-        margin-top: -5px; 
+        margin-top: -5px;
         line-height: 1.5;
       }
       .info-text p {
@@ -310,12 +310,25 @@
     <div class="ad-banner" id="ad-top">[상단 배너 광고 영역 - 728x90]</div>
 
     <div class="controls">
-      <div class="control-group play-row" style="flex-direction: row; align-items: center; gap: 15px;">
+      <div
+        class="control-group play-row"
+        style="flex-direction: row; align-items: center; gap: 15px"
+      >
         <button id="play-btn" class="play-stop-btn" title="재생/정지">
-          <svg id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-          <svg id="icon-stop" viewBox="0 0 24 24" style="display: none;"><path d="M6 6h12v12H6z"/></svg>
+          <svg id="icon-play" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg id="icon-stop" viewBox="0 0 24 24" style="display: none">
+            <path d="M6 6h12v12H6z" />
+          </svg>
         </button>
-        <div class="lookahead-ui" id="status-text" style="flex-grow: 1; text-align: right;">Ready</div>
+        <div
+          class="lookahead-ui"
+          id="status-text"
+          style="flex-grow: 1; text-align: right"
+        >
+          Ready
+        </div>
       </div>
 
       <div class="control-group">
@@ -404,12 +417,19 @@
 
     <div class="info-text">
       <p>
-        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br>
-        <span class="en-text">Settings changes are applied from the first downbeat of the next bar.</span>
+        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br />
+        <span class="en-text"
+          >Settings changes are applied from the first downbeat of the next
+          bar.</span
+        >
       </p>
       <p>
-        Jitter / Drift는 오디오 엔진 내부 기준의 타이밍 안정도 지표이며, 실제 출력 레이턴시는 반영되지 않을 수 있습니다.<br>
-        <span class="en-text">Jitter and drift indicate the internal audio engine's timing stability; actual output latency may vary.</span>
+        Jitter / Drift는 오디오 엔진 내부 기준의 타이밍 안정도 지표이며, 실제
+        출력 레이턴시는 반영되지 않을 수 있습니다.<br />
+        <span class="en-text"
+          >Jitter and drift indicate the internal audio engine's timing
+          stability; actual output latency may vary.</span
+        >
       </p>
     </div>
 
