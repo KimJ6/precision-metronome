@@ -1,248 +1,431 @@
-// metronome-worklet.js
-// AudioWorkletProcessor 기반 메트로놈 엔진 (샘플 정확도 보장 및 오차 계측 추가)
+// app.js
 
-class MetronomeProcessor extends AudioWorkletProcessor {
-  constructor() {
-    super();
+let audioContext = null;
+let metronomeNode = null;
+let isPlaying = false;
+let wakeLock = null;
 
-    this.running = false;
+let currentVolume = 1.0;
+let currentBPM = 60;
+let beatsPerBar = 4;
+let currentDenominator = 4;
 
-    // 활성 설정
-    this.bpm = 60;
-    this.numerator = 4;
-    this.denominator = 4;
-    this.volume = 1.0;
-    this.quantize = 'bar';
-    this.pending = null;
+const QUANTIZE_MODE = 'bar';
 
-    this.beatIndex = 0;
-    this.barIndex = 0;
+let noteQueue = [];
+let visualState = {
+  lastBeatTime: 0,
+  currentBeatIndex: 0,
+  duration: 1.0,
+  flashAlpha: 0,
+  targetBPM: 60,
+};
+let pendingLabel = null;
 
-    // --- [추가됨] 계측을 위한 절대 샘플 카운터 ---
-    this.samplesUntilNextTick = 0;
-    this.totalSamples = 0;
-    this.idealSample = 0;
-    this.lastTickSample = -1;
+let metricState = {
+  driftMs: 0.0,
+  jitterMs: 0.0,
+  errors: [],
+};
 
-    // 클릭 합성용 (최적화된 DSP)
-    this.env = 0.0;
-    this.envDecay = 0.0;
-    this.phase = 0.0;
-    this.freq = 800;
-    this.accentFreq = 1000;
+// DOM
+const playBtn = document.getElementById('play-btn');
+const iconPlay = document.getElementById('icon-play');
+const iconStop = document.getElementById('icon-stop');
+const volumeInput = document.getElementById('volume-input');
+const volumeSlider = document.getElementById('volume-slider');
+const bpmInput = document.getElementById('bpm-input');
+const bpmSlider = document.getElementById('bpm-slider');
+const bpmUpBtn = document.getElementById('bpm-up');
+const bpmDownBtn = document.getElementById('bpm-down');
+const stepInput = document.getElementById('step-input');
+const beatNumerator = document.getElementById('beat-numerator');
+const beatDenominator = document.getElementById('beat-denominator');
+const statusText = document.getElementById('status-text');
+const keepAwakeToggle = document.getElementById('keep-awake-toggle');
 
-    this._recomputeTiming();
-    this._setClickEnvelopeTimeConstant(0.02);
+function updateVolume(newVolumePercent) {
+  newVolumePercent = Math.max(0, Math.min(300, newVolumePercent));
+  volumeInput.value = newVolumePercent;
+  volumeSlider.value = newVolumePercent;
+  currentVolume = newVolumePercent / 100;
+  if (isPlaying) sendQuantizedSettings();
+}
 
-    this.port.onmessage = (event) => {
-      const msg = event.data;
-      if (!msg || typeof msg.type !== 'string') return;
+function updateBPM(newBPM) {
+  newBPM = Math.max(30, Math.min(300, newBPM));
+  currentBPM = newBPM;
+  visualState.targetBPM = currentBPM;
+  bpmInput.value = currentBPM;
+  bpmSlider.value = currentBPM;
+  if (isPlaying) sendQuantizedSettings();
+}
 
-      if (msg.type === 'start') {
-        this.running = true;
+function updateTimeSignature() {
+  let n = parseInt(beatNumerator.value);
+  if (isNaN(n) || n < 1) n = 1;
+  beatsPerBar = n;
 
-        // 시작 시 카운터 초기화
-        this.totalSamples = 0;
-        const startDelaySec =
-          typeof msg.startDelaySec === 'number' ? msg.startDelaySec : 0.05;
-        this.samplesUntilNextTick = startDelaySec * sampleRate;
-        this.idealSample = this.samplesUntilNextTick;
-        this.lastTickSample = -1;
+  let d = parseInt(beatDenominator.value);
+  if (isNaN(d)) d = 4;
+  currentDenominator = d;
 
-        const align = msg.align === false ? false : true;
-        if (align) {
-          this.beatIndex = 0;
-          this.barIndex = 0;
+  if (isPlaying) sendQuantizedSettings();
+}
+
+async function toggleWakeLock() {
+  if (keepAwakeToggle.checked) {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+      } catch (err) {
+        keepAwakeToggle.checked = false;
+      }
+    } else {
+      keepAwakeToggle.checked = false;
+    }
+  } else {
+    if (wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  }
+}
+
+volumeSlider.addEventListener('input', (e) =>
+  updateVolume(parseInt(e.target.value))
+);
+volumeInput.addEventListener('change', (e) => {
+  let val = parseInt(e.target.value);
+  if (isNaN(val)) val = Math.round(currentVolume * 100);
+  updateVolume(val);
+});
+bpmSlider.addEventListener('input', (e) => updateBPM(parseInt(e.target.value)));
+bpmInput.addEventListener('change', (e) => {
+  let val = parseInt(e.target.value);
+  if (isNaN(val)) val = currentBPM;
+  updateBPM(val);
+});
+bpmUpBtn.addEventListener('click', () => {
+  let step = parseInt(stepInput.value) || 1;
+  updateBPM(currentBPM + step);
+});
+bpmDownBtn.addEventListener('click', () => {
+  let step = parseInt(stepInput.value) || 1;
+  updateBPM(currentBPM - step);
+});
+beatNumerator.addEventListener('change', updateTimeSignature);
+beatDenominator.addEventListener('change', updateTimeSignature);
+playBtn.addEventListener('click', () =>
+  !isPlaying ? startMetronome() : stopMetronome()
+);
+keepAwakeToggle.addEventListener('change', toggleWakeLock);
+
+async function ensureAudio() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    // AudioContext 상태 변화(인터럽트 등) 감지 로직 추가
+    audioContext.onstatechange = () => {
+      console.log('AudioContext state changed:', audioContext.state);
+      if (
+        audioContext.state === 'suspended' ||
+        audioContext.state === 'interrupted'
+      ) {
+        if (isPlaying) {
+          stopMetronome();
+          if (statusText) statusText.textContent = 'Interrupted';
         }
-        this.port.postMessage({ type: 'state', running: true });
-      }
-
-      if (msg.type === 'stop') {
-        this.running = false;
-        this.env = 0.0;
-        this.samplesUntilNextTick = 0;
-        this.port.postMessage({ type: 'state', running: false });
-      }
-
-      if (msg.type === 'set') {
-        const next = {
-          bpm: this._clampNumber(msg.bpm, 30, 300, this.bpm),
-          numerator: this._clampInt(msg.numerator, 1, 32, this.numerator),
-          denominator: this._clampDenominator(
-            msg.denominator,
-            this.denominator
-          ),
-          volume: this._clampNumber(msg.volume, 0, 3.0, this.volume),
-          quantize:
-            msg.quantize === 'bar' || msg.quantize === 'beat'
-              ? msg.quantize
-              : this.quantize,
-        };
-        this.pending = next;
-
-        this.port.postMessage({
-          type: 'pending',
-          pending: {
-            bpm: next.bpm,
-            numerator: next.numerator,
-            denominator: next.denominator,
-            quantize: next.quantize,
-          },
-        });
       }
     };
   }
 
-  _clampNumber(v, min, max, fallback) {
-    if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
-    return Math.min(max, Math.max(min, v));
-  }
-  _clampInt(v, min, max, fallback) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, Math.round(n)));
-  }
-  _clampDenominator(v, fallback) {
-    const allowed = new Set([1, 2, 4, 8, 16, 32]);
-    const n = this._clampInt(v, 1, 32, fallback);
-    return allowed.has(n) ? n : fallback;
-  }
+  if (audioContext.state === 'suspended') await audioContext.resume();
 
-  _recomputeTiming() {
-    const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
-    this.samplesPerBeat = Math.max(1, secondsPerBeat * sampleRate);
-  }
+  if (!metronomeNode) {
+    // Vite 빌드 시스템이 워커를 올바르게 번들링하도록 URL 객체 사용 유지
+    await audioContext.audioWorklet.addModule(
+      new URL('./metronome-worklet.js', import.meta.url)
+    );
 
-  _setClickEnvelopeTimeConstant(tauSec) {
-    const tau = Math.max(0.001, tauSec);
-    this.envDecay = Math.exp(-1.0 / (tau * sampleRate));
-  }
-
-  _shouldApplyPendingAtThisBoundary() {
-    if (!this.pending) return false;
-    if (this.pending.quantize === 'beat') return true;
-    return this.beatIndex === 0;
-  }
-
-  _applyPending() {
-    if (!this.pending) return;
-
-    this.bpm = this.pending.bpm;
-    this.numerator = this.pending.numerator;
-    this.denominator = this.pending.denominator;
-    this.volume = this.pending.volume;
-    this.quantize = this.pending.quantize;
-
-    this.pending = null;
-    this._recomputeTiming();
-
-    this.port.postMessage({
-      type: 'applied',
-      applied: {
-        bpm: this.bpm,
-        numerator: this.numerator,
-        denominator: this.denominator,
-        quantize: this.quantize,
-      },
-    });
-  }
-
-  _triggerTick(exactTime, driftMs, intervalMs) {
-    if (this._shouldApplyPendingAtThisBoundary()) {
-      this._applyPending();
-    }
-
-    const isAccent = this.beatIndex === 0;
-    this.freq = isAccent ? this.accentFreq : 800;
-    this.env = 1.0;
-
-    // [수정됨] 틱 발생 시 계측한 Drift와 Interval을 메인 스레드로 전달
-    this.port.postMessage({
-      type: 'tick',
-      audioTime: exactTime,
-      beatIndex: this.beatIndex,
-      barIndex: this.barIndex,
-      bpm: this.bpm,
-      denominator: this.denominator,
-      numerator: this.numerator,
-      driftMs: driftMs,
-      intervalMs: intervalMs,
+    metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
     });
 
-    this.beatIndex++;
-    if (this.beatIndex >= this.numerator) {
-      this.beatIndex = 0;
-      this.barIndex++;
-    }
-  }
+    metronomeNode.connect(audioContext.destination);
 
-  process(inputs, outputs) {
-    const output = outputs[0];
-    const ch0 = output[0];
-    const ch1 = output.length > 1 ? output[1] : null;
-    if (!ch0) return true;
+    metronomeNode.port.onmessage = (e) => {
+      const msg = e.data;
+      if (!msg || typeof msg.type !== 'string') return;
 
-    const blockSize = ch0.length;
+      if (msg.type === 'tick') {
+        noteQueue.push({
+          noteTime: msg.audioTime,
+          beatIndex: msg.beatIndex,
+          bpm: msg.bpm,
+          denominator: msg.denominator,
+        });
 
-    if (!this.running) {
-      for (let i = 0; i < blockSize; i++) {
-        ch0[i] = 0.0;
-        if (ch1) ch1[i] = 0.0;
+        metricState.driftMs = msg.driftMs;
+
+        let expectedIntervalMs =
+          (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
+        let error = msg.intervalMs - expectedIntervalMs;
+
+        metricState.errors.push(error);
+        if (metricState.errors.length > 50) metricState.errors.shift();
+
+        let sumSq = 0;
+        for (let err of metricState.errors) sumSq += err * err;
+        metricState.jitterMs =
+          metricState.errors.length > 0
+            ? Math.sqrt(sumSq / metricState.errors.length)
+            : 0;
       }
-      return true;
-    }
-
-    let samplesToTick = this.samplesUntilNextTick;
-
-    for (let i = 0; i < blockSize; i++) {
-      let currentSample = this.totalSamples + i;
-
-      // 틱 발생 조건: 카운터가 0 이하로 떨어지는 정확한 샘플 프레임
-      if (samplesToTick <= 0) {
-        // [핵심] 오차(Drift) 계산: 현재 프레임과 수학적으로 완벽한 이상적 위치의 차이
-        let driftSamples = currentSample - this.idealSample;
-        let driftMs = (driftSamples / sampleRate) * 1000;
-
-        // 간격(Interval) 계산: 이전 틱과의 간격 (Jitter 계산용)
-        let intervalMs = 0;
-        if (this.lastTickSample !== -1) {
-          intervalMs =
-            ((currentSample - this.lastTickSample) / sampleRate) * 1000;
-        } else {
-          intervalMs = (this.samplesPerBeat / sampleRate) * 1000;
-        }
-        this.lastTickSample = currentSample;
-
-        // 틱 신호 발송
-        this._triggerTick(currentTime + i / sampleRate, driftMs, intervalMs);
-
-        // 다음 틱의 이상적인 위치 업데이트 (소수점 정밀도 유지)
-        samplesToTick += this.samplesPerBeat;
-        this.idealSample += this.samplesPerBeat;
+      if (msg.type === 'pending') {
+        pendingLabel = msg.pending;
+        renderStatus();
       }
-
-      let s = 0.0;
-      if (this.env > 1e-5) {
-        const phaseInc = 2 * Math.PI * (this.freq / sampleRate);
-        this.phase += phaseInc;
-        if (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI;
-
-        s = Math.sin(this.phase) * this.env * this.volume;
-        this.env *= this.envDecay;
+      if (msg.type === 'applied') {
+        pendingLabel = null;
+        renderStatus();
       }
-
-      ch0[i] = s;
-      if (ch1) ch1[i] = s;
-
-      samplesToTick -= 1;
-    }
-
-    // 다음 블록을 위해 상태 저장
-    this.samplesUntilNextTick = samplesToTick;
-    this.totalSamples += blockSize;
-
-    return true;
+    };
   }
 }
 
-registerProcessor('metronome-processor', MetronomeProcessor);
+function renderStatus() {
+  if (!statusText) return;
+
+  if (!isPlaying) {
+    statusText.textContent = 'Stopped';
+    return;
+  }
+
+  if (pendingLabel) {
+    const q = pendingLabel.quantize === 'bar' ? 'next bar' : 'next beat';
+    statusText.textContent = `Pending: ${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator} (${q})`;
+    return;
+  }
+
+  statusText.textContent = `Running: ${currentBPM} BPM, ${beatsPerBar}/${currentDenominator}`;
+}
+
+function sendQuantizedSettings() {
+  if (!metronomeNode) return;
+  metronomeNode.port.postMessage({
+    type: 'set',
+    bpm: currentBPM,
+    numerator: beatsPerBar,
+    denominator: currentDenominator,
+    volume: currentVolume,
+    quantize: QUANTIZE_MODE,
+  });
+}
+
+async function startMetronome() {
+  await ensureAudio();
+
+  noteQueue = [];
+  visualState.lastBeatTime = 0;
+  visualState.currentBeatIndex = 0;
+  visualState.flashAlpha = 0;
+  pendingLabel = null;
+
+  metricState.driftMs = 0;
+  metricState.jitterMs = 0;
+  metricState.errors = [];
+
+  sendQuantizedSettings();
+  metronomeNode.port.postMessage({
+    type: 'start',
+    startDelaySec: 0.05,
+    align: true,
+  });
+
+  isPlaying = true;
+
+  // 버튼 UI 변경 (재생 아이콘 숨기고, 정지 아이콘 표시)
+  playBtn.classList.add('stop');
+  iconPlay.style.display = 'none';
+  iconStop.style.display = 'block';
+  renderStatus();
+
+  if (keepAwakeToggle.checked) {
+    try {
+      await toggleWakeLock();
+    } catch (_) {}
+  }
+}
+
+function stopMetronome() {
+  if (metronomeNode) metronomeNode.port.postMessage({ type: 'stop' });
+
+  isPlaying = false;
+
+  // 버튼 UI 원상복구 (정지 아이콘 숨기고, 재생 아이콘 표시)
+  playBtn.classList.remove('stop');
+  iconPlay.style.display = 'block';
+  iconStop.style.display = 'none';
+
+  pendingLabel = null;
+  renderStatus();
+
+  if (wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    if (keepAwakeToggle.checked && isPlaying && !wakeLock) {
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+        } catch (_) {}
+      }
+    }
+  }
+});
+
+// p5.js 시각화 렌더링
+window.setup = function () {
+  const canvas = createCanvas(400, 300);
+  canvas.parent('canvas-container');
+  angleMode(RADIANS);
+};
+
+window.draw = function () {
+  background(30);
+  const currentTime = audioContext ? audioContext.currentTime : 0;
+
+  while (noteQueue.length > 0 && noteQueue[0].noteTime <= currentTime) {
+    const currentNote = noteQueue.shift();
+    visualState.lastBeatTime = currentNote.noteTime;
+    visualState.currentBeatIndex = currentNote.beatIndex;
+    visualState.duration =
+      (60.0 / currentNote.bpm) * (4.0 / currentNote.denominator);
+    visualState.flashAlpha = 255;
+  }
+
+  let P = 0;
+  if (isPlaying && visualState.lastBeatTime > 0) {
+    P = (currentTime - visualState.lastBeatTime) / visualState.duration;
+    P = constrain(P, 0, 1);
+  }
+
+  let maxAngle = PI / 4;
+  let directionMultiplier = visualState.currentBeatIndex % 2 === 0 ? 1 : -1;
+  let angle = maxAngle * Math.sin(Math.PI * P) * directionMultiplier;
+
+  translate(width / 2, height - 40);
+
+  // 1. 양 끝 도달 지점 하얀색 기준선
+  push();
+  stroke(255);
+  strokeWeight(4);
+  push();
+  rotate(-maxAngle);
+  line(0, -200, 0, -210);
+  pop();
+  push();
+  rotate(maxAngle);
+  line(0, -200, 0, -210);
+  pop();
+  pop();
+
+  // 2. 중앙 빨간 삼각형 표시기
+  push();
+  noStroke();
+  fill(255, 50, 50);
+  triangle(-6, -215, 6, -215, 0, -205);
+  pop();
+
+  // 3. 움직이는 롤리팝 바늘
+  push();
+  rotate(angle);
+
+  let needleLength = 190;
+  let lollipopY = -140;
+  let lollipopSize = 24;
+
+  let flashR = 255,
+    flashG = 255,
+    flashB = 255;
+  if (visualState.currentBeatIndex === 0) {
+    flashG = 50;
+    flashB = 50;
+  }
+
+  if (visualState.flashAlpha > 0) {
+    noStroke();
+    fill(flashR, flashG, flashB, visualState.flashAlpha * 0.4);
+    ellipse(0, lollipopY, lollipopSize * 2.5, lollipopSize * 2.5);
+  }
+
+  stroke(255);
+  strokeWeight(3);
+  line(0, 0, 0, -needleLength);
+
+  stroke(255);
+  strokeWeight(3);
+  fill(100);
+  ellipse(0, lollipopY, lollipopSize, lollipopSize);
+
+  if (visualState.flashAlpha > 0) {
+    noStroke();
+    fill(flashR, flashG, flashB, visualState.flashAlpha);
+    ellipse(0, lollipopY, lollipopSize - 3, lollipopSize - 3);
+    visualState.flashAlpha -= 15;
+  }
+
+  noStroke();
+  fill(255);
+  ellipse(0, 0, 20, 20);
+  fill(100);
+  ellipse(0, 0, 8, 8);
+  pop();
+
+  resetMatrix();
+
+  // 4. 우측 하단 텍스트
+  textAlign(RIGHT, BOTTOM);
+  fill(255);
+  textSize(24);
+  text(`${currentBPM} BPM`, width - 15, height - 60);
+
+  let rightColonX = width - 45;
+  let rightValueX = width - 40;
+
+  textSize(12);
+
+  fill(200);
+  textAlign(RIGHT, BOTTOM);
+  text('Time Sig :', rightColonX, height - 35);
+  textAlign(LEFT, BOTTOM);
+  text(`${beatsPerBar}/${currentDenominator}`, rightValueX, height - 35);
+
+  fill(150);
+  textAlign(RIGHT, BOTTOM);
+  text('Quantize :', rightColonX, height - 15);
+  textAlign(LEFT, BOTTOM);
+  text(`${QUANTIZE_MODE}`, rightValueX, height - 15);
+
+  // 5. 좌측 하단 텍스트 (엔진 계측 라벨로 명확화)
+  let leftColonX = 85; // 레이블이 길어졌으므로 콜론 위치 X좌표 이동
+  let leftValueX = 90;
+
+  fill(150);
+  textSize(12);
+
+  textAlign(RIGHT, BOTTOM);
+  text('Engine Jitter :', leftColonX, height - 35);
+  text('Engine Drift :', leftColonX, height - 15);
+
+  textAlign(LEFT, BOTTOM);
+  text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
+  text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);
+};
