@@ -416,8 +416,8 @@ window.draw = function () {
   textAlign(LEFT, BOTTOM);
   text(val2, rightValueX, height - 15);
 
-  let leftColonX = 65;  
-  let leftValueX = 1350; 
+  let leftColonX = 55;  
+  let leftValueX = 120; 
 
   fill(100);
   textSize(11);
