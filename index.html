@@ -46,7 +46,7 @@
         width: 400px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        /* box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); 삭제됨 */
       }
 
       .control-group {
@@ -164,14 +164,24 @@
         fill: currentColor;
       }
 
+      /* Select 태그 다크모드 적용 */
       select {
         padding: 8px 12px;
         font-size: 18px;
         border-radius: 4px;
+        border: 1px solid #555;
         cursor: pointer;
-        background: #fff;
-        color: #000;
+        background: #333;
+        color: #ffffff;
         font-weight: bold;
+        outline: none;
+      }
+      select:focus {
+        border-color: #4caf50;
+      }
+      select option {
+        background: #333;
+        color: #ffffff;
       }
 
       .time-signature-group {
@@ -222,7 +232,7 @@
         padding: 15px 25px;
         border-radius: 12px;
         box-sizing: border-box;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        /* box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); 삭제됨 */
         font-size: 16px;
         font-weight: bold;
       }
@@ -267,7 +277,6 @@
         transform: translateX(22px);
       }
 
-      /* 정보 안내 텍스트 스타일 */
       .info-text {
         font-size: 12px;
         color: #999;
@@ -424,11 +433,12 @@
         >
       </p>
       <p>
-        Jitter / Drift는 오디오 엔진 내부 기준의 타이밍 안정도 지표이며, 실제
-        출력 레이턴시는 반영되지 않을 수 있습니다.<br />
+        Jitter / Drift는 오디오 엔진의 타이밍 안정도를 나타내는 내부 계산
+        값이며, 실제 기기의 출력 레이턴시는 반영되지 않을 수 있습니다.<br />
         <span class="en-text"
-          >Jitter and drift indicate the internal audio engine's timing
-          stability; actual output latency may vary.</span
+          >Jitter and Drift are internally calculated values representing the
+          audio engine's timing stability, and may not reflect actual device
+          output latency.</span
         >
       </p>
     </div>

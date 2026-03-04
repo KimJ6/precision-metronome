@@ -125,7 +125,6 @@ async function ensureAudio() {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-    // AudioContext 상태 변화(인터럽트 등) 감지 로직 추가
     audioContext.onstatechange = () => {
       console.log('AudioContext state changed:', audioContext.state);
       if (
@@ -143,7 +142,6 @@ async function ensureAudio() {
   if (audioContext.state === 'suspended') await audioContext.resume();
 
   if (!metronomeNode) {
-    // Vite 빌드 시스템이 워커를 올바르게 번들링하도록 URL 객체 사용 유지
     await audioContext.audioWorklet.addModule(
       new URL('./metronome-worklet.js', import.meta.url)
     );
@@ -247,10 +245,9 @@ async function startMetronome() {
 
   isPlaying = true;
 
-  // 버튼 UI 변경 (재생 아이콘 숨기고, 정지 아이콘 표시)
-  playBtn.classList.add('stop');
-  iconPlay.style.display = 'none';
-  iconStop.style.display = 'block';
+  if (playBtn) playBtn.classList.add('stop');
+  if (iconPlay) iconPlay.style.display = 'none';
+  if (iconStop) iconStop.style.display = 'block';
   renderStatus();
 
   if (keepAwakeToggle.checked) {
@@ -265,10 +262,9 @@ function stopMetronome() {
 
   isPlaying = false;
 
-  // 버튼 UI 원상복구 (정지 아이콘 숨기고, 재생 아이콘 표시)
-  playBtn.classList.remove('stop');
-  iconPlay.style.display = 'block';
-  iconStop.style.display = 'none';
+  if (playBtn) playBtn.classList.remove('stop');
+  if (iconPlay) iconPlay.style.display = 'block';
+  if (iconStop) iconStop.style.display = 'none';
 
   pendingLabel = null;
   renderStatus();
@@ -391,41 +387,61 @@ window.draw = function () {
 
   resetMatrix();
 
-  // 4. 우측 하단 텍스트
+  // ==========================================
+  // 4. 우측 하단 텍스트 (동적 너비 우측 밀착 정렬)
+  // ==========================================
+  let rightMargin = width - 15;
+
+  // BPM 텍스트 우측 정렬
   textAlign(RIGHT, BOTTOM);
   fill(255);
   textSize(24);
-  text(`${currentBPM} BPM`, width - 15, height - 60);
-
-  let rightColonX = width - 45;
-  let rightValueX = width - 40;
+  text(`${currentBPM} BPM`, rightMargin, height - 60);
 
   textSize(12);
+  let val1 = `${beatsPerBar}/${currentDenominator}`;
+  let val2 = `${QUANTIZE_MODE}`;
+
+  // 두 설정 값 중 더 긴 텍스트의 길이를 측정
+  let maxValWidth = Math.max(textWidth(val1), textWidth(val2));
+
+  // 측정한 길이를 바탕으로 값(Value)과 레이블(Label)의 X좌표를 동적으로 계산
+  let rightValueX = rightMargin - maxValWidth; // 값 텍스트가 시작될 위치 (좌측 정렬됨)
+  let rightColonX = rightValueX - 8; // 콜론을 포함한 레이블이 끝날 위치 (우측 정렬됨)
 
   fill(200);
   textAlign(RIGHT, BOTTOM);
   text('Time Sig :', rightColonX, height - 35);
   textAlign(LEFT, BOTTOM);
-  text(`${beatsPerBar}/${currentDenominator}`, rightValueX, height - 35);
+  text(val1, rightValueX, height - 35);
 
   fill(150);
   textAlign(RIGHT, BOTTOM);
   text('Quantize :', rightColonX, height - 15);
   textAlign(LEFT, BOTTOM);
-  text(`${QUANTIZE_MODE}`, rightValueX, height - 15);
+  text(val2, rightValueX, height - 15);
 
-  // 5. 좌측 하단 텍스트 (엔진 계측 라벨로 명확화)
-  let leftColonX = 85; // 레이블이 길어졌으므로 콜론 위치 X좌표 이동
-  let leftValueX = 90;
+  // ==========================================
+  // 5. 좌측 하단 텍스트 (계측 데이터 우측 정렬 그룹화)
+  // ==========================================
+  let leftColonX = 55; // 콜론을 포함한 레이블의 우측 끝 X좌표
+  let leftValueX = 115; // Jitter/Drift 수치의 우측 끝 X좌표 (규격이 같아 우측 정렬로 통일)
 
+  // 그룹화를 위한 괄호 헤더
+  fill(100);
+  textSize(11);
+  textAlign(LEFT, BOTTOM);
+  text('Engine', 15, height - 55);
+
+  // 레이블 우측 정렬
   fill(150);
   textSize(12);
-
   textAlign(RIGHT, BOTTOM);
-  text('Engine Jitter :', leftColonX, height - 35);
-  text('Engine Drift :', leftColonX, height - 15);
+  text('Jitter :', leftColonX, height - 35);
+  text('Drift :', leftColonX, height - 15);
 
-  textAlign(LEFT, BOTTOM);
+  // 값(수치) 우측 정렬
+  textAlign(RIGHT, BOTTOM);
   text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
   text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);
 };
