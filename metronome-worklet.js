@@ -51,11 +51,12 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.env = 0.0;
     this.envDecay = 0.0;
     this.phase = 0.0;
-    this.freq = 800;
-    this.accentFreq = 1000;
+    this.freq = 440;        // 일반 박자: A4 음높이 (저피치 튜닝)
+    this.accentFreq = 880;  // 강박: 한 옥타브 위 (저피치 튜닝)
 
     this._recomputeTiming();
-    this._setClickEnvelopeTimeConstant(0.02);
+    // 감쇠 상수를 0.007(7ms)로 설정하여 낮은 피치에서도 뭉개지지 않고 "톡" 끊어지도록 조정
+    this._setClickEnvelopeTimeConstant(0.007);
 
     this.port.onmessage = (event) => {
       const msg = event.data;
@@ -185,7 +186,8 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   }
 
   _triggerTick(exactTime, driftMs, intervalMs, appliedPending) {
-    this.freq = this.beatIndex === 0 ? this.accentFreq : 800;
+    // 저피치 튜닝 주파수 적용
+    this.freq = this.beatIndex === 0 ? this.accentFreq : 440;
     this.env = 1.0;
 
     this.port.postMessage({
