@@ -1,24 +1,18 @@
 // app.js
 
-// --- 시스템 상태 및 동기화 변수 ---
 let audioContext = null;
-let worker = null;
+let metronomeNode = null; // AudioWorkletNode
+let isWorkletLoaded = false;
 let isPlaying = false;
-let wakeLock = null; // [추가됨] 화면 꺼짐 방지 잠금 객체
+let wakeLock = null;
 
 let currentVolume = 1.0;
 let currentBPM = 60;
 let beatsPerBar = 4;
 let currentDenominator = 4;
-let currentBeatIndex = 0;
-let nextNoteTime = 0.0;
-let lookahead = 25.0;
-let scheduleAheadTime = 0.1;
 
-// UI 동기화를 위한 데이터 큐
-let noteQueue = [];
+let noteQueue = []; // UI 시각화 동기화용 큐
 
-// 시각화 렌더링을 위한 현재 진행 상태
 let visualState = {
   lastBeatTime: 0,
   currentBeatIndex: 0,
@@ -29,27 +23,37 @@ let visualState = {
 
 // --- DOM 요소 ---
 const playBtn = document.getElementById('play-btn');
-
 const volumeInput = document.getElementById('volume-input');
 const volumeSlider = document.getElementById('volume-slider');
-
 const bpmInput = document.getElementById('bpm-input');
 const bpmSlider = document.getElementById('bpm-slider');
 const bpmUpBtn = document.getElementById('bpm-up');
 const bpmDownBtn = document.getElementById('bpm-down');
 const stepInput = document.getElementById('step-input');
-
 const beatNumerator = document.getElementById('beat-numerator');
 const beatDenominator = document.getElementById('beat-denominator');
 const statusText = document.getElementById('status-text');
-const keepAwakeToggle = document.getElementById('keep-awake-toggle'); // [추가됨] 화면 꺼짐 방지 토글
+const keepAwakeToggle = document.getElementById('keep-awake-toggle');
 
-// --- 상태 업데이트 함수 ---
+// --- 상태 업데이트 및 Worklet으로 전송 ---
+function syncParamsToWorklet() {
+  if (metronomeNode) {
+    metronomeNode.port.postMessage({
+      type: 'update',
+      bpm: currentBPM,
+      beatsPerBar: beatsPerBar,
+      denominator: currentDenominator,
+      volume: currentVolume,
+    });
+  }
+}
+
 function updateVolume(newVolume) {
   newVolume = Math.max(0, Math.min(300, newVolume));
   volumeInput.value = newVolume;
   volumeSlider.value = newVolume;
   currentVolume = newVolume / 100.0;
+  syncParamsToWorklet();
 }
 
 function updateBPM(newBPM) {
@@ -58,6 +62,7 @@ function updateBPM(newBPM) {
   visualState.targetBPM = currentBPM;
   bpmInput.value = currentBPM;
   bpmSlider.value = currentBPM;
+  syncParamsToWorklet();
 }
 
 function updateTimeSignature() {
@@ -65,18 +70,17 @@ function updateTimeSignature() {
   if (isNaN(n) || n < 1) n = 1;
   beatsPerBar = n;
   currentDenominator = parseInt(beatDenominator.value);
+  syncParamsToWorklet();
 }
 
-// --- [추가됨] 화면 꺼짐 방지(Wake Lock) 제어 함수 ---
+// --- 화면 꺼짐 방지(Wake Lock) ---
 async function toggleWakeLock() {
   if (keepAwakeToggle.checked) {
     if ('wakeLock' in navigator) {
       try {
         wakeLock = await navigator.wakeLock.request('screen');
-        console.log('Wake Lock 활성화됨');
       } catch (err) {
-        console.error(`Wake Lock 요청 실패: ${err.name}, ${err.message}`);
-        keepAwakeToggle.checked = false; // 실패 시 토글 원복
+        keepAwakeToggle.checked = false;
       }
     } else {
       alert(
@@ -88,7 +92,6 @@ async function toggleWakeLock() {
     if (wakeLock !== null) {
       wakeLock.release().then(() => {
         wakeLock = null;
-        console.log('Wake Lock 해제됨');
       });
     }
   }
@@ -98,66 +101,81 @@ async function toggleWakeLock() {
 volumeSlider.addEventListener('input', (e) =>
   updateVolume(parseInt(e.target.value))
 );
-volumeInput.addEventListener('change', (e) => {
-  let val = parseInt(e.target.value);
-  if (isNaN(val)) val = Math.round(currentVolume * 100);
-  updateVolume(val);
-});
+volumeInput.addEventListener('change', (e) =>
+  updateVolume(parseInt(e.target.value) || 100)
+);
 
 bpmSlider.addEventListener('input', (e) => updateBPM(parseInt(e.target.value)));
-bpmInput.addEventListener('change', (e) => {
-  let val = parseInt(e.target.value);
-  if (isNaN(val)) val = currentBPM;
-  updateBPM(val);
-});
-bpmUpBtn.addEventListener('click', () => {
-  let step = parseInt(stepInput.value) || 1;
-  updateBPM(currentBPM + step);
-});
-bpmDownBtn.addEventListener('click', () => {
-  let step = parseInt(stepInput.value) || 1;
-  updateBPM(currentBPM - step);
-});
+bpmInput.addEventListener('change', (e) =>
+  updateBPM(parseInt(e.target.value) || currentBPM)
+);
+bpmUpBtn.addEventListener('click', () =>
+  updateBPM(currentBPM + (parseInt(stepInput.value) || 1))
+);
+bpmDownBtn.addEventListener('click', () =>
+  updateBPM(currentBPM - (parseInt(stepInput.value) || 1))
+);
 
 beatNumerator.addEventListener('change', updateTimeSignature);
 beatDenominator.addEventListener('change', updateTimeSignature);
+keepAwakeToggle.addEventListener('change', toggleWakeLock);
 
 playBtn.addEventListener('click', () => {
   if (!isPlaying) startMetronome();
   else stopMetronome();
 });
 
-// 화면 꺼짐 방지 토글 이벤트 연결
-keepAwakeToggle.addEventListener('change', toggleWakeLock);
-
-// --- 핵심 로직: 오디오 스케줄링 ---
-function startMetronome() {
+// --- 핵심 로직: AudioWorklet 초기화 및 구동 ---
+async function initAudioEngine() {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
   }
   if (audioContext.state === 'suspended') {
-    audioContext.resume();
+    await audioContext.resume();
   }
 
-  if (!worker) {
-    worker = new Worker(new URL('./worker.js', import.meta.url), {
-      type: 'module',
-    });
-    worker.onmessage = function (e) {
-      if (e.data === 'tick') scheduler();
+  if (!isWorkletLoaded) {
+    statusText.textContent = 'Loading Engine...';
+    // Vite 환경에 맞춘 모듈 로드 방식
+    await audioContext.audioWorklet.addModule(
+      new URL('./metronome-worklet.js', import.meta.url)
+    );
+
+    metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor');
+    metronomeNode.connect(audioContext.destination);
+
+    // Worklet으로부터 정확한 틱 발생 시점을 수신하여 시각화 큐에 푸시
+    metronomeNode.port.onmessage = (e) => {
+      if (e.data.type === 'tick') {
+        noteQueue.push({
+          noteTime: e.data.time,
+          beatIndex: e.data.beatIndex,
+          bpm: e.data.bpm,
+          denominator: e.data.denominator,
+        });
+      }
     };
+
+    // 실제 하드웨어 샘플레이트 전달 및 초기 파라미터 동기화
+    metronomeNode.port.postMessage({
+      type: 'init',
+      sampleRate: audioContext.sampleRate,
+    });
+    syncParamsToWorklet();
+    isWorkletLoaded = true;
   }
+}
+
+async function startMetronome() {
+  await initAudioEngine();
 
   isPlaying = true;
   playBtn.textContent = 'Stop';
   playBtn.classList.add('stop');
-  statusText.textContent = 'Running';
+  statusText.textContent = 'AudioWorklet Active';
 
-  currentBeatIndex = 0;
-  nextNoteTime = audioContext.currentTime + 0.05;
   noteQueue = [];
-
-  worker.postMessage('start');
+  metronomeNode.port.postMessage({ type: 'start' });
 }
 
 function stopMetronome() {
@@ -166,72 +184,16 @@ function stopMetronome() {
   playBtn.classList.remove('stop');
   statusText.textContent = 'Stopped';
 
-  if (worker) worker.postMessage('stop');
+  if (metronomeNode) {
+    metronomeNode.port.postMessage({ type: 'stop' });
+  }
   noteQueue = [];
-
   if (audioContext) audioContext.suspend();
 }
 
-function scheduleNote(beatNumber, time) {
-  noteQueue.push({
-    noteTime: time,
-    beatIndex: beatNumber,
-    bpm: currentBPM,
-    denominator: currentDenominator,
-  });
-
-  if (noteQueue.length > 0) {
-    let latestScheduled = noteQueue[noteQueue.length - 1];
-    if (latestScheduled.bpm !== visualState.targetBPM) {
-      statusText.textContent = `Queuing: ${latestScheduled.bpm} BPM...`;
-    } else {
-      statusText.textContent = `Look-ahead: ${noteQueue.length} notes`;
-    }
-  }
-
-  const osc = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-
-  osc.connect(gain);
-  gain.connect(audioContext.destination);
-
-  osc.frequency.value = beatNumber === 0 ? 1000 : 800;
-
-  if (currentVolume > 0) {
-    gain.gain.setValueAtTime(currentVolume, time);
-    gain.gain.exponentialRampToValueAtTime(
-      Math.max(0.0001, currentVolume * 0.001),
-      time + 0.05
-    );
-  } else {
-    gain.gain.setValueAtTime(0, time);
-  }
-
-  osc.start(time);
-  osc.stop(time + 0.05);
-}
-
-function nextNote() {
-  const secondsPerBeat = (60.0 / currentBPM) * (4.0 / currentDenominator);
-
-  nextNoteTime += secondsPerBeat;
-  currentBeatIndex++;
-  if (currentBeatIndex >= beatsPerBar) {
-    currentBeatIndex = 0;
-  }
-}
-
-function scheduler() {
-  while (nextNoteTime < audioContext.currentTime + scheduleAheadTime) {
-    scheduleNote(currentBeatIndex, nextNoteTime);
-    nextNote();
-  }
-}
-
-// 화면 백그라운드 전환/복귀 대응 (시각화 동기화 및 Wake Lock 복원)
+// 화면 백그라운드 전환/복귀 대응
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible') {
-    // 1. 오디오-비주얼 동기화
     if (isPlaying && audioContext) {
       const currentTime = audioContext.currentTime;
       while (noteQueue.length > 0 && noteQueue[0].noteTime < currentTime) {
@@ -242,19 +204,15 @@ document.addEventListener('visibilitychange', async () => {
           (60.0 / pastNote.bpm) * (4.0 / pastNote.denominator);
       }
     }
-
-    // 2. 화면 꺼짐 방지 토글이 켜져있었다면 OS에 의해 풀린 Lock을 재요청
     if (keepAwakeToggle.checked && 'wakeLock' in navigator) {
       try {
         wakeLock = await navigator.wakeLock.request('screen');
-      } catch (err) {
-        console.error(`Wake Lock 자동 복구 실패: ${err.message}`);
-      }
+      } catch (err) {}
     }
   }
 });
 
-// --- p5.js 시각화 렌더링 (UI 스레드) ---
+// --- p5.js 시각화 렌더링 ---
 window.setup = function () {
   const canvas = createCanvas(400, 300);
   canvas.parent('canvas-container');
@@ -269,10 +227,8 @@ window.draw = function () {
 
   while (noteQueue.length > 0 && noteQueue[0].noteTime <= currentTime) {
     let currentNote = noteQueue.shift();
-
     visualState.lastBeatTime = currentNote.noteTime;
     visualState.currentBeatIndex = currentNote.beatIndex;
-
     visualState.duration =
       (60.0 / currentNote.bpm) * (4.0 / currentNote.denominator);
     visualState.flashAlpha = 255;
@@ -292,24 +248,19 @@ window.draw = function () {
 
   translate(width / 2, height - 40);
 
-  // --- [추가됨] 양 끝 도달 지점 하얀색 기준선 표시 ---
+  // 양 끝 도달 지점 하얀색 기준선
   push();
-  stroke(255); // 흰색
-  strokeWeight(4); // 선 두께
-
-  // 좌측 한계선 (-45도)
+  stroke(255);
+  strokeWeight(4);
   push();
   rotate(-maxAngle);
   line(0, -215, 0, -225);
   pop();
-
-  // 우측 한계선 (+45도)
   push();
   rotate(maxAngle);
   line(0, -215, 0, -225);
   pop();
   pop();
-  // ---------------------------------------------------
 
   // 중앙 빨간 삼각형 표시기
   push();
