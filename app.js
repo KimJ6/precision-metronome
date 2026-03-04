@@ -131,7 +131,7 @@ function startMetronome() {
 
 function stopMetronome() {
   isPlaying = false;
-  playBtn.textContent = '재생 (Play)';
+  playBtn.textContent = 'Play';
   playBtn.classList.remove('stop');
   statusText.textContent = 'Stopped';
 
