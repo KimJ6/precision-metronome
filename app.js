@@ -124,13 +124,10 @@ keepAwakeToggle.addEventListener('change', toggleWakeLock);
 async function ensureAudio() {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
+    
     audioContext.onstatechange = () => {
       console.log('AudioContext state changed:', audioContext.state);
-      if (
-        audioContext.state === 'suspended' ||
-        audioContext.state === 'interrupted'
-      ) {
+      if (audioContext.state === 'suspended' || audioContext.state === 'interrupted') {
         if (isPlaying) {
           stopMetronome();
           if (statusText) statusText.textContent = 'Interrupted';
@@ -138,13 +135,12 @@ async function ensureAudio() {
       }
     };
   }
-
+  
   if (audioContext.state === 'suspended') await audioContext.resume();
 
   if (!metronomeNode) {
-    await audioContext.audioWorklet.addModule(
-      new URL('./metronome-worklet.js', import.meta.url)
-    );
+    // Vite 빌드 시 파싱 오류 방지를 위해 명시적 .href 경로 추가
+    await audioContext.audioWorklet.addModule(new URL('./metronome-worklet.js', import.meta.url).href);
 
     metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor', {
       numberOfInputs: 0,
@@ -166,28 +162,37 @@ async function ensureAudio() {
           denominator: msg.denominator,
         });
 
+        // [개선 반영] 탭이 백그라운드로 이동해 requestAnimationFrame이 멈췄을 때
+        // 큐가 무한정 쌓여 렌더링 스파이크(Jank)가 발생하는 것을 방지 (최대 200개 유지)
+        if (noteQueue.length > 200) {
+          noteQueue.shift();
+        }
+
         metricState.driftMs = msg.driftMs;
 
-        let expectedIntervalMs =
-          (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
-        let error = msg.intervalMs - expectedIntervalMs;
+        if (typeof msg.intervalMs === 'number' && Number.isFinite(msg.intervalMs)) {
+          
+          if (msg.appliedPending) {
+            metricState.errors = [];
+            pendingLabel = null; 
+            renderStatus();
+          }
 
-        metricState.errors.push(error);
-        if (metricState.errors.length > 50) metricState.errors.shift();
+          let expectedIntervalMs = (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
+          let error = msg.intervalMs - expectedIntervalMs;
 
-        let sumSq = 0;
-        for (let err of metricState.errors) sumSq += err * err;
-        metricState.jitterMs =
-          metricState.errors.length > 0
-            ? Math.sqrt(sumSq / metricState.errors.length)
-            : 0;
+          metricState.errors.push(error);
+          if (metricState.errors.length > 50) metricState.errors.shift();
+
+          let sumSq = metricState.errors.reduce((acc, val) => acc + val * val, 0);
+          metricState.jitterMs = metricState.errors.length > 0 ? Math.sqrt(sumSq / metricState.errors.length) : 0;
+        } else {
+          console.warn('Invalid intervalMs received, skipping Jitter update.');
+        }
       }
+      
       if (msg.type === 'pending') {
         pendingLabel = msg.pending;
-        renderStatus();
-      }
-      if (msg.type === 'applied') {
-        pendingLabel = null;
         renderStatus();
       }
     };
@@ -244,7 +249,7 @@ async function startMetronome() {
   });
 
   isPlaying = true;
-
+  
   if (playBtn) playBtn.classList.add('stop');
   if (iconPlay) iconPlay.style.display = 'none';
   if (iconStop) iconStop.style.display = 'block';
@@ -261,11 +266,11 @@ function stopMetronome() {
   if (metronomeNode) metronomeNode.port.postMessage({ type: 'stop' });
 
   isPlaying = false;
-
+  
   if (playBtn) playBtn.classList.remove('stop');
   if (iconPlay) iconPlay.style.display = 'block';
   if (iconStop) iconStop.style.display = 'none';
-
+  
   pendingLabel = null;
   renderStatus();
 
@@ -319,7 +324,6 @@ window.draw = function () {
 
   translate(width / 2, height - 40);
 
-  // 1. 양 끝 도달 지점 하얀색 기준선
   push();
   stroke(255);
   strokeWeight(4);
@@ -333,14 +337,12 @@ window.draw = function () {
   pop();
   pop();
 
-  // 2. 중앙 빨간 삼각형 표시기
   push();
   noStroke();
   fill(255, 50, 50);
   triangle(-6, -215, 6, -215, 0, -205);
   pop();
 
-  // 3. 움직이는 롤리팝 바늘
   push();
   rotate(angle);
 
@@ -387,12 +389,8 @@ window.draw = function () {
 
   resetMatrix();
 
-  // ==========================================
-  // 4. 우측 하단 텍스트 (동적 너비 우측 밀착 정렬)
-  // ==========================================
   let rightMargin = width - 15;
 
-  // BPM 텍스트 우측 정렬
   textAlign(RIGHT, BOTTOM);
   fill(255);
   textSize(24);
@@ -401,13 +399,10 @@ window.draw = function () {
   textSize(12);
   let val1 = `${beatsPerBar}/${currentDenominator}`;
   let val2 = `${QUANTIZE_MODE}`;
-
-  // 두 설정 값 중 더 긴 텍스트의 길이를 측정
+  
   let maxValWidth = Math.max(textWidth(val1), textWidth(val2));
-
-  // 측정한 길이를 바탕으로 값(Value)과 레이블(Label)의 X좌표를 동적으로 계산
-  let rightValueX = rightMargin - maxValWidth; // 값 텍스트가 시작될 위치 (좌측 정렬됨)
-  let rightColonX = rightValueX - 8; // 콜론을 포함한 레이블이 끝날 위치 (우측 정렬됨)
+  let rightValueX = rightMargin - maxValWidth; 
+  let rightColonX = rightValueX - 8;           
 
   fill(200);
   textAlign(RIGHT, BOTTOM);
@@ -421,26 +416,20 @@ window.draw = function () {
   textAlign(LEFT, BOTTOM);
   text(val2, rightValueX, height - 15);
 
-  // ==========================================
-  // 5. 좌측 하단 텍스트 (계측 데이터 우측 정렬 그룹화)
-  // ==========================================
-  let leftColonX = 55; // 콜론을 포함한 레이블의 우측 끝 X좌표
-  let leftValueX = 115; // Jitter/Drift 수치의 우측 끝 X좌표 (규격이 같아 우측 정렬로 통일)
+  let leftColonX = 55;  
+  let leftValueX = 115; 
 
-  // 그룹화를 위한 괄호 헤더
   fill(100);
   textSize(11);
   textAlign(LEFT, BOTTOM);
-  text('Engine', 15, height - 55);
+  text('(Engine)', 15, height - 55);
 
-  // 레이블 우측 정렬
   fill(150);
   textSize(12);
   textAlign(RIGHT, BOTTOM);
   text('Jitter :', leftColonX, height - 35);
   text('Drift :', leftColonX, height - 15);
 
-  // 값(수치) 우측 정렬
   textAlign(RIGHT, BOTTOM);
   text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
   text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);

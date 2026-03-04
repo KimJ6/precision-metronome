@@ -46,7 +46,6 @@
         width: 400px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
-        /* box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); 삭제됨 */
       }
 
       .control-group {
@@ -158,13 +157,17 @@
       .play-stop-btn.stop {
         background-color: #f44336;
       }
+
       .play-stop-btn svg {
-        width: 24px;
-        height: 24px;
+        width: 34px;
+        height: 34px;
         fill: currentColor;
       }
 
-      /* Select 태그 다크모드 적용 */
+      #icon-play {
+        margin-left: 0;
+      }
+
       select {
         padding: 8px 12px;
         font-size: 18px;
@@ -232,7 +235,6 @@
         padding: 15px 25px;
         border-radius: 12px;
         box-sizing: border-box;
-        /* box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); 삭제됨 */
         font-size: 16px;
         font-weight: bold;
       }
@@ -325,10 +327,10 @@
       >
         <button id="play-btn" class="play-stop-btn" title="재생/정지">
           <svg id="icon-play" viewBox="0 0 24 24">
-            <path d="M8 5v14l11-7z" />
+            <path d="M6 3v18L24 12z" />
           </svg>
           <svg id="icon-stop" viewBox="0 0 24 24" style="display: none">
-            <path d="M6 6h12v12H6z" />
+            <path d="M5 5h14v14H5z" />
           </svg>
         </button>
         <div
