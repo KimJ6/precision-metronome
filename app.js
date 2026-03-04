@@ -422,7 +422,7 @@ window.draw = function () {
   fill(100);
   textSize(11);
   textAlign(LEFT, BOTTOM);
-  text('(Engine)', 15, height - 55);
+  text('Engine', 15, height - 55);
 
   fill(150);
   textSize(12);
