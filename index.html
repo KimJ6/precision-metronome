@@ -75,7 +75,7 @@
         flex-grow: 1;
       }
 
-      /* === 커스텀 슬라이더 (채워지는 효과 적용) === */
+      /* === 커스텀 슬라이더 === */
       input[type='range'] {
         flex-grow: 1;
         width: 10px;
@@ -84,29 +84,21 @@
         -webkit-appearance: none;
         appearance: none;
         background: transparent;
-        /* JS에서 넘겨주는 퍼센트 값을 받기 위한 변수 (기본 50%) */
-        --val: 50%;
+        /* JS에서 계산된 그라데이션을 받기 위한 변수 */
+        --track-bg: #444;
       }
 
       input[type='range']:focus {
         outline: none;
       }
 
-      /* 크롬, 사파리, 엣지용 트랙 (linear-gradient를 통해 왼쪽을 밝게 칠함) */
       input[type='range']::-webkit-slider-runnable-track {
         width: 100%;
         height: 6px;
-        background: linear-gradient(
-          to right,
-          #999 0%,
-          #999 var(--val),
-          #444 var(--val),
-          #444 100%
-        );
+        background: var(--track-bg);
         border-radius: 3px;
       }
 
-      /* 크롬, 사파리, 엣지용 썸(동그라미) */
       input[type='range']::-webkit-slider-thumb {
         height: 16px;
         width: 16px;
@@ -118,22 +110,13 @@
         margin-top: -5px;
       }
 
-      /* 파이어폭스용 트랙 (빈 영역) */
       input[type='range']::-moz-range-track {
         width: 100%;
         height: 6px;
-        background: #444;
+        background: var(--track-bg);
         border-radius: 3px;
       }
 
-      /* 파이어폭스용 프로그레스 (채워진 영역) */
-      input[type='range']::-moz-range-progress {
-        height: 6px;
-        background: #999;
-        border-radius: 3px;
-      }
-
-      /* 파이어폭스용 썸 */
       input[type='range']::-moz-range-thumb {
         height: 16px;
         width: 16px;
@@ -470,7 +453,7 @@
             type="range"
             id="volume-slider"
             min="0"
-            max="300"
+            max="500"
             value="100"
           />
           <input
@@ -478,7 +461,7 @@
             id="volume-input"
             class="number-input"
             min="0"
-            max="300"
+            max="500"
             value="100"
             title="볼륨 입력"
           />

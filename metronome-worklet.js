@@ -52,7 +52,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.clickFreq = 4000;
 
     this._recomputeTiming();
-    // 바디는 5ms로 둔탁함을 잡고, 어택은 1.5ms로 쪼개어 클릭감 극대화
     this._setClickEnvelopes(0.005, 0.0015);
 
     this.port.onmessage = (event) => {
@@ -96,7 +95,8 @@ class MetronomeProcessor extends AudioWorkletProcessor {
             msg.denominator,
             this.denominator
           ),
-          volume: this._clampNumber(msg.volume, 0, 3.0, this.volume),
+          // 볼륨 최대치를 5.0(500%)으로 허용
+          volume: this._clampNumber(msg.volume, 0, 5.0, this.volume),
           accentEnabled:
             typeof msg.accentEnabled === 'boolean'
               ? msg.accentEnabled
@@ -165,6 +165,13 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.pending = null;
     this._recomputeTiming();
 
+    // 300% (3.0) 초과 시 엔벨로프 바디를 최대 8ms까지 소폭 늘림
+    let dynamicTau = 0.005;
+    if (this.volume > 3.0) {
+      dynamicTau += (this.volume - 3.0) * 0.0015;
+    }
+    this._setClickEnvelopes(dynamicTau, 0.0015);
+
     this.referenceSample = currentSample;
     this.tickCounter = 0;
     this.fracAcc = 0.0;
@@ -177,7 +184,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         ? this.accentFreq
         : this.baseFreq;
 
-    // 타격 발생 시 바디와 어택 엔벨로프를 동시에 활성화
     this.envBody = 1.0;
     this.envClick = 1.0;
 
@@ -259,10 +265,8 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         this.tickCounter++;
       }
 
-      // 두 가지 소리(바디 + 어택 클릭)를 합성 (Mixing)
       let s = 0.0;
 
-      // 1. 편안한 피치를 제공하는 바디 톤
       if (this.envBody > 1e-5) {
         this.phaseBody += 2 * Math.PI * (this.freq / sampleRate);
         if (this.phaseBody > 2 * Math.PI) this.phaseBody -= 2 * Math.PI;
@@ -270,7 +274,6 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         this.envBody *= this.envDecayBody;
       }
 
-      // 2. 극도로 짧고 날카로운 어택 클릭 톤 (게인을 0.5로 낮추어 자연스럽게 믹스)
       if (this.envClick > 1e-5) {
         this.phaseClick += 2 * Math.PI * (this.clickFreq / sampleRate);
         if (this.phaseClick > 2 * Math.PI) this.phaseClick -= 2 * Math.PI;
@@ -278,7 +281,18 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         this.envClick *= this.envDecayClick;
       }
 
-      s *= this.volume;
+      // 3.0 (300%) 이하: 정직한 선형 증폭 유지
+      // 3.0 초과: 최대 4.0 (400%)까지만 소폭 증가하도록 보정
+      let actualVolume = this.volume;
+      if (this.volume > 3.0) {
+        actualVolume = 3.0 + (this.volume - 3.0) * 0.5;
+      }
+
+      s *= actualVolume;
+
+      // [핵심] 고볼륨 클리핑 방지를 위한 소프트 클립 (Soft Clip)
+      // 값이 1.0을 넘지 않도록 제한하여 찢어지는 파열음을 방지합니다.
+      s = Math.tanh(s);
 
       ch0[i] = s;
       if (ch1) ch1[i] = s;

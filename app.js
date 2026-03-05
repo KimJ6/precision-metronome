@@ -50,12 +50,21 @@ const statusText = document.getElementById('status-text');
 const keepAwakeToggle = document.getElementById('keep-awake-toggle');
 
 function updateVolume(newVolumePercent) {
-  newVolumePercent = Math.max(0, Math.min(300, newVolumePercent));
+  newVolumePercent = Math.max(0, Math.min(500, newVolumePercent));
   volumeInput.value = newVolumePercent;
   volumeSlider.value = newVolumePercent;
 
-  const volPercent = (newVolumePercent / 300) * 100;
-  volumeSlider.style.setProperty('--val', `${volPercent}%`);
+  // 500 기준 퍼센트 계산
+  const volPercent = (newVolumePercent / 500) * 100;
+
+  // 300 이하(60%)일 때는 모두 회색, 300 초과 시 넘은 만큼만 빨간색 그라데이션 적용
+  let trackBg;
+  if (newVolumePercent <= 300) {
+    trackBg = `linear-gradient(to right, #999 0%, #999 ${volPercent}%, #444 ${volPercent}%, #444 100%)`;
+  } else {
+    trackBg = `linear-gradient(to right, #999 0%, #999 60%, #f44336 ${volPercent}%, #444 ${volPercent}%, #444 100%)`;
+  }
+  volumeSlider.style.setProperty('--track-bg', trackBg);
 
   currentVolume = newVolumePercent / 100;
   if (isPlaying) sendQuantizedSettings();
@@ -69,7 +78,8 @@ function updateBPM(newBPM) {
   bpmSlider.value = currentBPM;
 
   const bpmPercent = ((currentBPM - 30) / (300 - 30)) * 100;
-  bpmSlider.style.setProperty('--val', `${bpmPercent}%`);
+  const trackBg = `linear-gradient(to right, #999 0%, #999 ${bpmPercent}%, #444 ${bpmPercent}%, #444 100%)`;
+  bpmSlider.style.setProperty('--track-bg', trackBg);
 
   if (isPlaying) sendQuantizedSettings();
 }
@@ -228,7 +238,6 @@ async function ensureAudio() {
   }
 }
 
-// (next bar) 안내 문구 제거 로직 반영
 function renderStatus() {
   if (!statusText) return;
 
@@ -238,7 +247,6 @@ function renderStatus() {
   }
 
   if (pendingLabel) {
-    // [개선] (next bar) 문구를 제거하여 시각적으로 더 깔끔하게 표시
     statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span>`;
     return;
   }
@@ -326,6 +334,7 @@ document.addEventListener('visibilitychange', async () => {
   }
 });
 
+// 초기화 시 슬라이더 게이지 업데이트
 updateVolume(100);
 updateBPM(60);
 
