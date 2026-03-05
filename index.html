@@ -1,554 +1,565 @@
-// app.js
-
-let audioContext = null;
-let metronomeNode = null;
-let isPlaying = false;
-let wakeLock = null;
-
-let currentVolume = 1.0;
-let currentBPM = 60;
-let beatsPerBar = 4;
-let currentDenominator = 4;
-let isAccentEnabled = true;
-
-const QUANTIZE_MODE = 'bar';
-
-let noteQueue = [];
-let visualState = {
-  lastBeatTime: 0,
-  currentBeatIndex: 0,
-  duration: 1.0,
-  flashAlpha: 0,
-  targetBPM: 60,
-  playingBPM: 60,
-  playingNumerator: 4,
-  playingDenominator: 4,
-};
-let pendingLabel = null;
-
-let metricState = {
-  driftMs: 0.0,
-  jitterMs: 0.0,
-  errors: [],
-};
-
-// DOM 요소
-const canvasContainer = document.getElementById('canvas-container');
-const volumeInput = document.getElementById('volume-input');
-const volumeSlider = document.getElementById('volume-slider');
-const bpmInput = document.getElementById('bpm-input');
-const bpmSlider = document.getElementById('bpm-slider');
-const bpmUpBtn = document.getElementById('bpm-up');
-const bpmDownBtn = document.getElementById('bpm-down');
-const stepInput = document.getElementById('step-input');
-const beatNumerator = document.getElementById('beat-numerator');
-const beatDenominator = document.getElementById('beat-denominator');
-const accToggle = document.getElementById('acc-toggle');
-const statusText = document.getElementById('status-text');
-const keepAwakeToggle = document.getElementById('keep-awake-toggle');
-
-function updateVolume(newVolumePercent) {
-  newVolumePercent = Math.max(0, Math.min(500, newVolumePercent));
-  volumeInput.value = newVolumePercent;
-  volumeSlider.value = newVolumePercent;
-
-  const volPercent = (newVolumePercent / 500) * 100;
-
-  let trackBg;
-  if (newVolumePercent <= 300) {
-    trackBg = `linear-gradient(to right, #999 0%, #999 ${volPercent}%, #444 ${volPercent}%, #444 100%)`;
-  } else {
-    trackBg = `linear-gradient(to right, #999 0%, #999 60%, #f44336 ${volPercent}%, #444 ${volPercent}%, #444 100%)`;
-  }
-  volumeSlider.style.setProperty('--track-bg', trackBg);
-
-  currentVolume = newVolumePercent / 100;
-  if (isPlaying) sendQuantizedSettings();
-}
-
-function updateBPM(newBPM) {
-  newBPM = Math.max(30, Math.min(300, newBPM));
-  currentBPM = newBPM;
-  visualState.targetBPM = currentBPM;
-  bpmInput.value = currentBPM;
-  bpmSlider.value = currentBPM;
-
-  const bpmPercent = ((currentBPM - 30) / (300 - 30)) * 100;
-  const trackBg = `linear-gradient(to right, #999 0%, #999 ${bpmPercent}%, #444 ${bpmPercent}%, #444 100%)`;
-  bpmSlider.style.setProperty('--track-bg', trackBg);
-
-  if (isPlaying) sendQuantizedSettings();
-}
-
-function updateTimeSignature() {
-  let n = parseInt(beatNumerator.value);
-  if (isNaN(n) || n < 1) n = 1;
-  beatsPerBar = n;
-
-  let d = parseInt(beatDenominator.value);
-  if (isNaN(d)) d = 4;
-  currentDenominator = d;
-
-  if (isPlaying) sendQuantizedSettings();
-}
-
-async function toggleWakeLock() {
-  if (keepAwakeToggle.checked) {
-    if ('wakeLock' in navigator) {
-      try {
-        wakeLock = await navigator.wakeLock.request('screen');
-      } catch (err) {
-        keepAwakeToggle.checked = false;
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrecisionTick Metronome</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #1a1a1a;
+        color: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 20px 0;
+        box-sizing: border-box;
+        gap: 20px;
       }
-    } else {
-      keepAwakeToggle.checked = false;
-    }
-  } else {
-    if (wakeLock) {
-      await wakeLock.release();
-      wakeLock = null;
-    }
-  }
-}
 
-volumeSlider.addEventListener('input', (e) =>
-  updateVolume(parseInt(e.target.value))
-);
-volumeInput.addEventListener('change', (e) => {
-  let val = parseInt(e.target.value);
-  if (isNaN(val)) val = Math.round(currentVolume * 100);
-  updateVolume(val);
-});
-bpmSlider.addEventListener('input', (e) => updateBPM(parseInt(e.target.value)));
-bpmInput.addEventListener('change', (e) => {
-  let val = parseInt(e.target.value);
-  if (isNaN(val)) val = currentBPM;
-  updateBPM(val);
-});
-bpmUpBtn.addEventListener('click', () => {
-  let step = parseInt(stepInput.value) || 1;
-  updateBPM(currentBPM + step);
-});
-bpmDownBtn.addEventListener('click', () => {
-  let step = parseInt(stepInput.value) || 1;
-  updateBPM(currentBPM - step);
-});
-beatNumerator.addEventListener('change', updateTimeSignature);
-beatDenominator.addEventListener('change', updateTimeSignature);
-keepAwakeToggle.addEventListener('change', toggleWakeLock);
+      .ad-banner {
+        display: none;
+        width: 100%;
+        max-width: 728px;
+        height: 90px;
+        background-color: #222;
+        border: 1px dashed #555;
+        border-radius: 8px;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 14px;
+        box-sizing: border-box;
+        width: calc(100% - 40px);
+      }
 
-// 캔버스 컨테이너 클릭 시 재생/정지
-canvasContainer.addEventListener('click', () =>
-  !isPlaying ? startMetronome() : stopMetronome()
-);
+      .controls {
+        background: #1a1a1a;
+        border: 2px solid #333;
+        padding: 25px;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        width: 440px;
+        max-width: calc(100% - 40px);
+        box-sizing: border-box;
+      }
 
-if (accToggle) {
-  accToggle.addEventListener('change', (e) => {
-    isAccentEnabled = e.target.checked;
-    if (isPlaying) sendQuantizedSettings();
-  });
-}
+      .control-group {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
 
-async function ensureAudio() {
-  if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      .control-group label,
+      .toggle-container label {
+        font-size: 18px;
+        font-weight: bold;
+        color: #ffffff;
+        white-space: nowrap;
+      }
 
-    audioContext.onstatechange = () => {
-      if (
-        audioContext.state === 'suspended' ||
-        audioContext.state === 'interrupted'
-      ) {
-        if (isPlaying) {
-          stopMetronome();
-          if (statusText) statusText.innerHTML = '<span>Interrupted</span>';
+      .slider-label {
+        width: 85px;
+        flex-shrink: 0;
+      }
+
+      .input-slider-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-grow: 1;
+      }
+
+      /* === 커스텀 슬라이더 === */
+      input[type='range'] {
+        flex-grow: 1;
+        width: 10px;
+        cursor: pointer;
+        margin: 0;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        --track-bg: #444;
+      }
+
+      input[type='range']:focus {
+        outline: none;
+      }
+
+      input[type='range']::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 6px;
+        background: var(--track-bg);
+        border-radius: 3px;
+      }
+
+      input[type='range']::-webkit-slider-thumb {
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #d1d1d1;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+        margin-top: -5px;
+      }
+
+      input[type='range']::-moz-range-track {
+        width: 100%;
+        height: 6px;
+        background: var(--track-bg);
+        border-radius: 3px;
+      }
+
+      input[type='range']::-moz-range-thumb {
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #d1d1d1;
+        cursor: pointer;
+        border: none;
+      }
+      /* =========================================== */
+
+      .number-input {
+        height: 38px;
+        font-size: 18px;
+        font-weight: bold;
+        text-align: center;
+        border-radius: 4px;
+        border: 1px solid #555;
+        background: #333;
+        color: white;
+        outline: none;
+        box-sizing: border-box;
+      }
+      .number-input:focus {
+        border-color: #d1d1d1;
+      }
+
+      input[type='number']::-webkit-inner-spin-button,
+      input[type='number']::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+
+      #volume-input,
+      #bpm-input,
+      #beat-numerator,
+      #beat-denominator {
+        width: 64px;
+        flex-shrink: 0;
+      }
+
+      .stepper {
+        display: flex;
+        align-items: center;
+        background: #333;
+        border: 1px solid #555;
+        border-radius: 6px;
+        overflow: hidden;
+        height: 38px;
+        box-sizing: border-box;
+        flex-shrink: 0;
+      }
+
+      .stepper .number-input {
+        border: none;
+        border-radius: 0;
+        width: 32px;
+        height: 100%;
+        background: transparent;
+        padding: 0;
+        font-size: 16px;
+      }
+
+      .step-btn {
+        padding: 0;
+        width: 30px;
+        height: 100%;
+        font-size: 18px;
+        font-weight: bold;
+        background-color: #444;
+        color: white;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.1s;
+      }
+
+      .step-btn:hover {
+        background-color: #666;
+      }
+      .step-btn:active {
+        background-color: #d1d1d1;
+        color: #1a1a1a;
+      }
+
+      .app-title {
+        font-weight: 800;
+        font-size: 20px;
+        letter-spacing: -0.5px;
+        color: #ffffff;
+        white-space: nowrap;
+      }
+
+      .time-signature-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-grow: 1;
+        justify-content: flex-end;
+      }
+
+      .acc-toggle-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 3px;
+      }
+      .acc-toggle-wrapper span {
+        font-size: 14px;
+        font-weight: bold;
+        color: #aaa;
+        letter-spacing: 0.5px;
+      }
+
+      select {
+        height: 38px;
+        font-size: 18px;
+        font-weight: bold;
+        border-radius: 4px;
+        border: 1px solid #555;
+        cursor: pointer;
+        background: #333;
+        color: #ffffff;
+        outline: none;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      select:focus {
+        border-color: #d1d1d1;
+      }
+      select option {
+        background: #333;
+        color: #ffffff;
+      }
+
+      /* === 캔버스를 버튼처럼 사용하기 위한 스타일 === */
+      #canvas-container {
+        border: 2px solid #333;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #1a1a1a;
+        width: 440px;
+        max-width: calc(100% - 40px);
+        box-sizing: border-box;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        transition: border-color 0.2s ease;
+      }
+
+      /* 호버 시 기본 피드백 (재생 중일 때) */
+      #canvas-container:hover {
+        border-color: #555;
+      }
+      #canvas-container:active {
+        border-color: #d1d1d1 !important;
+        animation: none !important;
+      }
+
+      /* === 추가: 대기(Ready) 상태 숨쉬는 녹색 테두리 애니메이션 === */
+      @keyframes breatheGreen {
+        0% {
+          border-color: #333;
+        }
+        50% {
+          border-color: #4caf50;
+        } /* 녹색 */
+        100% {
+          border-color: #333;
         }
       }
-    };
-  }
 
-  if (audioContext.state === 'suspended') await audioContext.resume();
+      .ready-pulse {
+        animation: breatheGreen 2.5s infinite ease-in-out;
+      }
 
-  if (!metronomeNode) {
-    await audioContext.audioWorklet.addModule(
-      new URL('./metronome-worklet.js', import.meta.url).href
-    );
+      /* 대기 상태일 때 호버하면 애니메이션 멈추고 녹색 고정 (직관성 강화) */
+      #canvas-container.ready-pulse:hover {
+        border-color: #4caf50;
+        animation: none;
+      }
+      /* ======================================================== */
 
-    metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor', {
-      numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
-    });
+      #canvas-container canvas {
+        width: 100% !important;
+        height: auto !important;
+        display: block;
+      }
 
-    metronomeNode.connect(audioContext.destination);
+      .lookahead-ui {
+        font-size: 14px;
+        color: #888;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        align-items: center;
+        column-gap: 5px;
+        row-gap: 3px;
+        min-height: 24px;
+      }
+      .lookahead-ui span {
+        white-space: nowrap;
+      }
 
-    metronomeNode.port.onmessage = (e) => {
-      const msg = e.data;
-      if (!msg || typeof msg.type !== 'string') return;
+      .toggle-container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 440px;
+        max-width: calc(100% - 40px);
+        background: #1a1a1a;
+        border: 2px solid #333;
+        padding: 15px 25px;
+        border-radius: 12px;
+        box-sizing: border-box;
+      }
 
-      if (msg.type === 'tick') {
-        noteQueue.push({
-          noteTime: msg.audioTime,
-          beatIndex: msg.beatIndex,
-          bpm: msg.bpm,
-          denominator: msg.denominator,
-          numerator: msg.numerator,
-        });
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 46px;
+        height: 24px;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #555;
+        transition: 0.4s;
+        border-radius: 24px;
+      }
+      .slider:before {
+        position: absolute;
+        content: '';
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.4s;
+        border-radius: 50%;
+      }
+      input:checked + .slider {
+        background-color: #d1d1d1;
+      }
+      input:checked + .slider:before {
+        transform: translateX(22px);
+        background-color: #1a1a1a;
+      }
 
-        if (noteQueue.length > 200) {
-          noteQueue.shift();
+      .switch.small {
+        width: 36px;
+        height: 20px;
+      }
+      .switch.small .slider:before {
+        height: 14px;
+        width: 14px;
+        left: 3px;
+        bottom: 3px;
+      }
+      .switch.small input:checked + .slider:before {
+        transform: translateX(16px);
+      }
+
+      .info-text {
+        font-size: 12px !important;
+        color: #999;
+        text-align: left;
+        width: 440px;
+        max-width: calc(100% - 40px);
+        margin: -5px auto 0 auto;
+        padding: 0 12px;
+        box-sizing: border-box;
+        line-height: 1.6;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      .info-text p {
+        margin: 12px 0;
+      }
+      .info-text .en-text {
+        font-size: 11px !important;
+        color: #666;
+        display: block;
+        margin-top: 2px;
+      }
+
+      @media (max-width: 480px) {
+        .control-group {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
         }
-
-        metricState.driftMs = msg.driftMs;
-
-        if (
-          typeof msg.intervalMs === 'number' &&
-          Number.isFinite(msg.intervalMs)
-        ) {
-          if (msg.appliedPending) {
-            metricState.errors = [];
-            pendingLabel = null;
-            renderStatus();
-          }
-
-          let expectedIntervalMs =
-            (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
-          let error = msg.intervalMs - expectedIntervalMs;
-
-          metricState.errors.push(error);
-          if (metricState.errors.length > 50) metricState.errors.shift();
-
-          let sumSq = metricState.errors.reduce(
-            (acc, val) => acc + val * val,
-            0
-          );
-          metricState.jitterMs =
-            metricState.errors.length > 0
-              ? Math.sqrt(sumSq / metricState.errors.length)
-              : 0;
+        .slider-label {
+          width: auto;
+        }
+        .input-slider-group,
+        .time-signature-group {
+          margin-left: 0;
+          width: 100%;
+        }
+        .play-row {
+          flex-direction: row !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          width: 100%;
         }
       }
+    </style>
+  </head>
+  <body>
+    <div class="ad-banner" id="ad-top">[상단 배너 광고 영역 - 728x90]</div>
 
-      if (msg.type === 'pending') {
-        pendingLabel = msg.pending;
-        renderStatus();
-      }
-    };
-  }
-}
+    <div class="controls">
+      <div class="control-group play-row">
+        <div class="app-title">PrecisionTick</div>
+        <div class="lookahead-ui" id="status-text">
+          <span>Ready</span>
+        </div>
+      </div>
 
-// 상태 렌더링 및 캔버스 애니메이션 클래스 토글
-function renderStatus() {
-  if (!statusText) return;
+      <div class="control-group">
+        <label class="slider-label">VOLUME</label>
+        <div class="input-slider-group">
+          <input
+            type="range"
+            id="volume-slider"
+            min="0"
+            max="500"
+            value="100"
+          />
+          <input
+            type="number"
+            id="volume-input"
+            class="number-input"
+            min="0"
+            max="500"
+            value="100"
+            title="볼륨 입력"
+          />
+        </div>
+      </div>
 
-  if (!isPlaying) {
-    statusText.innerHTML = '<span>Ready</span>';
-    // 대기 상태일 때 숨쉬는 애니메이션 클래스 추가
-    if (canvasContainer) canvasContainer.classList.add('ready-pulse');
-    return;
-  }
+      <div class="control-group">
+        <label class="slider-label">BPM</label>
+        <div class="input-slider-group">
+          <input type="range" id="bpm-slider" min="30" max="300" value="60" />
+          <div class="stepper">
+            <button id="bpm-down" class="step-btn">-</button>
+            <input
+              type="number"
+              id="step-input"
+              class="number-input"
+              min="1"
+              max="50"
+              value="10"
+              title="증감 단위(n)"
+            />
+            <button id="bpm-up" class="step-btn">+</button>
+          </div>
+          <input
+            type="number"
+            id="bpm-input"
+            class="number-input"
+            min="30"
+            max="300"
+            value="60"
+            title="BPM 입력"
+          />
+        </div>
+      </div>
 
-  // 재생 시작 시 애니메이션 클래스 제거
-  if (canvasContainer) canvasContainer.classList.remove('ready-pulse');
+      <div class="control-group">
+        <label>Time Signature</label>
+        <div class="time-signature-group">
+          <div class="acc-toggle-wrapper">
+            <span>ACC</span>
+            <label class="switch small" title="강박(Accent) 켜기/끄기">
+              <input type="checkbox" id="acc-toggle" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <input
+            type="number"
+            id="beat-numerator"
+            class="number-input"
+            min="1"
+            max="32"
+            value="4"
+            title="한 마디 박자 수"
+          />
+          <span style="font-size: 24px; font-weight: bold">/</span>
+          <select id="beat-denominator">
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+          </select>
+        </div>
+      </div>
+    </div>
 
-  if (pendingLabel) {
-    statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span>`;
-    return;
-  }
+    <div id="canvas-container" title="Click to Play/Stop"></div>
 
-  statusText.innerHTML = `<span>Running</span> <span>${currentBPM} BPM, ${beatsPerBar}/${currentDenominator}</span>`;
-}
+    <div class="toggle-container">
+      <label for="keep-awake-toggle">Keep Display Awake</label>
+      <label class="switch">
+        <input type="checkbox" id="keep-awake-toggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
 
-function sendQuantizedSettings() {
-  if (!metronomeNode) return;
-  metronomeNode.port.postMessage({
-    type: 'set',
-    bpm: currentBPM,
-    numerator: beatsPerBar,
-    denominator: currentDenominator,
-    volume: currentVolume,
-    accentEnabled: isAccentEnabled,
-  });
-}
+    <div class="info-text">
+      <p>
+        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br />
+        <span class="en-text"
+          >Settings changes are applied from the first downbeat of the next
+          bar.</span
+        >
+      </p>
+      <p>
+        Jitter, Drift는 오디오 엔진의 타이밍 안정도를 나타내는 내부 계산
+        값입니다.<br />
+        <span class="en-text"
+          >Jitter and Drift are internally calculated values representing the
+          audio engine's timing stability.</span
+        >
+      </p>
+    </div>
 
-async function startMetronome() {
-  await ensureAudio();
+    <div class="ad-banner" id="ad-bottom">[하단 배너 광고 영역 - 728x90]</div>
 
-  noteQueue = [];
-  visualState.lastBeatTime = 0;
-  visualState.currentBeatIndex = 0;
-  visualState.flashAlpha = 0;
-  pendingLabel = null;
-
-  visualState.playingBPM = currentBPM;
-  visualState.playingNumerator = beatsPerBar;
-  visualState.playingDenominator = currentDenominator;
-
-  metricState.driftMs = 0;
-  metricState.jitterMs = 0;
-  metricState.errors = [];
-
-  sendQuantizedSettings();
-  metronomeNode.port.postMessage({
-    type: 'start',
-    startDelaySec: 0.05,
-    align: true,
-  });
-
-  isPlaying = true;
-  renderStatus();
-
-  if (keepAwakeToggle.checked) {
-    try {
-      await toggleWakeLock();
-    } catch (_) {}
-  }
-}
-
-function stopMetronome() {
-  if (metronomeNode) metronomeNode.port.postMessage({ type: 'stop' });
-
-  isPlaying = false;
-  pendingLabel = null;
-  renderStatus();
-
-  if (wakeLock) {
-    wakeLock.release().catch(() => {});
-    wakeLock = null;
-  }
-}
-
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState === 'visible') {
-    if (keepAwakeToggle.checked && isPlaying && !wakeLock) {
-      if ('wakeLock' in navigator) {
-        try {
-          wakeLock = await navigator.wakeLock.request('screen');
-        } catch (_) {}
-      }
-    }
-  }
-});
-
-updateVolume(100);
-updateBPM(60);
-// 초기 로드 시 대기(Ready) 애니메이션 적용을 위해 호출
-renderStatus();
-
-// p5.js 시각화 렌더링
-window.setup = function () {
-  const canvas = createCanvas(400, 300);
-  canvas.parent('canvas-container');
-  angleMode(RADIANS);
-};
-
-window.draw = function () {
-  background('#1a1a1a');
-  const currentTime = audioContext ? audioContext.currentTime : 0;
-
-  while (noteQueue.length > 0 && noteQueue[0].noteTime <= currentTime) {
-    const currentNote = noteQueue.shift();
-    visualState.lastBeatTime = currentNote.noteTime;
-    visualState.currentBeatIndex = currentNote.beatIndex;
-    visualState.duration =
-      (60.0 / currentNote.bpm) * (4.0 / currentNote.denominator);
-    visualState.flashAlpha = 255;
-
-    visualState.playingBPM = currentNote.bpm;
-    visualState.playingNumerator = currentNote.numerator;
-    visualState.playingDenominator = currentNote.denominator;
-  }
-
-  let P = 0;
-  if (isPlaying && visualState.lastBeatTime > 0) {
-    P = (currentTime - visualState.lastBeatTime) / visualState.duration;
-    P = constrain(P, 0, 1);
-  }
-
-  let maxAngle = PI / 4;
-  let directionMultiplier = visualState.currentBeatIndex % 2 === 0 ? 1 : -1;
-  let angle = maxAngle * Math.sin(Math.PI * P) * directionMultiplier;
-
-  // --- 상단 LED 비트 인디케이터 ---
-  const dNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
-  const ledY = 25;
-  const ledRadius = 7;
-
-  const maxSwingX = Math.sin(PI / 4) * 205;
-  const startX = width / 2 - maxSwingX;
-  const endX = width / 2 + maxSwingX;
-
-  for (let i = 0; i < dNum; i++) {
-    const x =
-      dNum === 1 ? width / 2 : startX + (i * (endX - startX)) / (dNum - 1);
-    const isLit = isPlaying && i === visualState.currentBeatIndex;
-
-    if (isLit) {
-      if (i === 0 && isAccentEnabled) fill('#f44336'); // 강박
-      else fill('#d1d1d1'); // 약박
-    } else {
-      fill('#333'); // 비활성
-    }
-
-    noStroke();
-    ellipse(x, ledY, ledRadius * 2, ledRadius * 2);
-
-    if (isLit) {
-      let coreColor, coreDiameter;
-      if (i === 0 && isAccentEnabled) {
-        coreColor = '#ff8a80';
-        coreDiameter = ledRadius * 1.4;
-      } else {
-        coreColor = '#ffffff';
-        coreDiameter = ledRadius * 1.3;
-      }
-      fill(coreColor);
-      ellipse(x, ledY, coreDiameter, coreDiameter);
-    }
-  }
-
-  translate(width / 2, height - 40);
-
-  // 뒤쪽 배경 가이드라인
-  push();
-  stroke(255);
-  strokeWeight(4);
-  push();
-  rotate(-maxAngle);
-  line(0, -200, 0, -210);
-  pop();
-  push();
-  rotate(maxAngle);
-  line(0, -200, 0, -210);
-  pop();
-  pop();
-
-  // 중심축 삼각형
-  push();
-  noStroke();
-  fill(255, 50, 50);
-  triangle(-6, -215, 6, -215, 0, -205);
-  pop();
-
-  // 바늘(추) 렌더링
-  push();
-  rotate(angle);
-
-  let needleLength = 190;
-  let lollipopY = -140;
-  let lollipopSize = 24;
-
-  // 1. 바늘 막대기
-  stroke(255);
-  strokeWeight(3);
-  line(0, 0, 0, -needleLength);
-
-  // 2. 바늘 추 테두리 및 기본 색상 (불 꺼진 상태)
-  stroke(255);
-  strokeWeight(3);
-  fill(100);
-  ellipse(0, lollipopY, lollipopSize, lollipopSize);
-
-  // 3. 점등 효과 (테두리 안쪽에서만 빛나도록 LED 스타일 적용)
-  if (visualState.flashAlpha > 0) {
-    noStroke();
-    let isAccent = isAccentEnabled && visualState.currentBeatIndex === 0;
-
-    if (isAccent) {
-      fill(244, 67, 54, visualState.flashAlpha);
-    } else {
-      fill(209, 209, 209, visualState.flashAlpha);
-    }
-    ellipse(0, lollipopY, lollipopSize - 3, lollipopSize - 3);
-
-    if (isAccent) {
-      fill(255, 138, 128, visualState.flashAlpha);
-    } else {
-      fill(255, 255, 255, visualState.flashAlpha);
-    }
-
-    let coreSize = isAccent
-      ? (lollipopSize - 3) * 0.7
-      : (lollipopSize - 3) * 0.65;
-    ellipse(0, lollipopY, coreSize, coreSize);
-
-    visualState.flashAlpha -= 15;
-  }
-
-  // 중심축 고정점
-  noStroke();
-  fill(255);
-  ellipse(0, 0, 20, 20);
-  fill(100);
-  ellipse(0, 0, 8, 8);
-  pop();
-
-  resetMatrix();
-
-  // --- 우측 텍스트 ---
-  let rightMargin = width - 15;
-
-  let displayBPM = isPlaying ? visualState.playingBPM : currentBPM;
-  let displayNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
-  let displayDen = isPlaying
-    ? visualState.playingDenominator
-    : currentDenominator;
-
-  if (pendingLabel) {
-    fill('#f44336');
-    textSize(14);
-    textStyle(BOLD);
-    textAlign(RIGHT, BOTTOM);
-    text('PENDING', rightMargin, height - 88);
-    textStyle(NORMAL);
-  }
-
-  textAlign(RIGHT, BOTTOM);
-  fill(255);
-  textSize(24);
-  text(`${displayBPM} BPM`, rightMargin, height - 60);
-
-  textSize(12);
-  let val1 = `${displayNum}/${displayDen}`;
-  let val2 = `${QUANTIZE_MODE}`;
-
-  let maxValWidth = Math.max(textWidth(val1), textWidth(val2));
-  let rightValueX = rightMargin - maxValWidth;
-  let rightColonX = rightValueX - 8;
-
-  fill(200);
-  textAlign(RIGHT, BOTTOM);
-  text('Time Sig :', rightColonX, height - 35);
-  textAlign(LEFT, BOTTOM);
-  text(val1, rightValueX, height - 35);
-
-  fill(150);
-  textAlign(RIGHT, BOTTOM);
-  text('Quantize :', rightColonX, height - 15);
-  textAlign(LEFT, BOTTOM);
-  text(val2, rightValueX, height - 15);
-
-  // --- 좌측 텍스트 ---
-  let leftMargin = 15;
-
-  fill(100);
-  textSize(10);
-  textAlign(LEFT, BOTTOM);
-  text('Engine', leftMargin, height - 55);
-
-  fill(150);
-  textSize(12);
-  let leftLbl1 = 'Jitter :';
-  let leftLbl2 = 'Drift :';
-
-  let maxLeftLblWidth = Math.max(textWidth(leftLbl1), textWidth(leftLbl2));
-  let leftColonX = leftMargin + maxLeftLblWidth;
-
-  textAlign(RIGHT, BOTTOM);
-  text(leftLbl1, leftColonX, height - 35);
-  text(leftLbl2, leftColonX, height - 15);
-
-  let leftValueX = leftColonX + 60;
-  textAlign(RIGHT, BOTTOM);
-  text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
-  text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);
-};
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
