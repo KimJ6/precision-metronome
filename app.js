@@ -268,7 +268,7 @@ window.draw = function () {
     Math.sin(Math.PI * P) *
     (visualState.currentBeatIndex % 2 === 0 ? 1 : -1);
 
-  // --- 개선: 상단 LED 비트 인디케이터 (레이어링 및 크기 확장 적용) ---
+  // --- 상단 LED 비트 인디케이터 (레이어링 및 크기 확장 적용) ---
   const dNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
   const maxSwingX = Math.sin(PI / 4) * 205;
   const startX = width / 2 - maxSwingX;
@@ -278,12 +278,11 @@ window.draw = function () {
   // 1단계: 비활성 도트(꺼진 도트)들을 먼저 렌더링
   for (let i = 0; i < dNum; i++) {
     const isLit = isPlaying && i === visualState.currentBeatIndex;
-    if (isLit) continue; // 켜진 도트는 최상단에 그리기 위해 1단계에서는 생략
+    if (isLit) continue;
 
     const x =
       dNum === 1 ? width / 2 : startX + (i * (endX - startX)) / (dNum - 1);
     noStroke();
-    // 꺼진 도트는 반투명하게 처리하여 활성 도트가 더 돋보이게 함
     fill(51, 51, 51, 150);
     ellipse(x, ledY, 14, 14);
   }
@@ -296,11 +295,9 @@ window.draw = function () {
     const isAcc = i === 0 && isAccentEnabled;
 
     noStroke();
-    // 활성 도트는 기본 크기(14px)보다 살짝 더 큰 17px로 스케일업(팝업 효과)
     fill(isAcc ? '#f44336' : '#d1d1d1');
     ellipse(x, ledY, 17, 17);
 
-    // 활성 도트의 빛나는 코어 부분도 비율에 맞춰 스케일업
     fill(isAcc ? '#ff8a80' : '#ffffff');
     ellipse(x, ledY, isAcc ? 12 : 11, isAcc ? 12 : 11);
   }
@@ -353,6 +350,17 @@ window.draw = function () {
 
   // --- 우측 텍스트 ---
   let rightMargin = width - 15;
+
+  // 누락되었던 PENDING 문구 복구
+  if (pendingLabel) {
+    fill('#f44336');
+    textSize(12);
+    textStyle(BOLD);
+    textAlign(RIGHT, BOTTOM);
+    text('PENDING', rightMargin, height - 88);
+    textStyle(NORMAL);
+  }
+
   fill(255);
   textSize(24);
   textAlign(RIGHT, BOTTOM);
