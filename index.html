@@ -270,36 +270,27 @@
         transition: border-color 0.2s ease;
       }
 
-      /* 호버 시 기본 피드백 (재생 중일 때) */
-      #canvas-container:hover {
-        border-color: #555;
-      }
+      /* 클릭(터치)하는 순간 피드백 */
       #canvas-container:active {
-        border-color: #d1d1d1 !important;
+        border-color: #555 !important;
         animation: none !important;
       }
 
-      /* === 추가: 대기(Ready) 상태 숨쉬는 녹색 테두리 애니메이션 === */
+      /* === 개선: 대기(Ready) 상태 애니메이션 시간 연장 (2.5s -> 4s) === */
       @keyframes breatheGreen {
         0% {
           border-color: #333;
         }
         50% {
-          border-color: #4caf50;
-        } /* 녹색 */
+          border-color: #3b5e40;
+        }
         100% {
           border-color: #333;
         }
       }
 
       .ready-pulse {
-        animation: breatheGreen 2.5s infinite ease-in-out;
-      }
-
-      /* 대기 상태일 때 호버하면 애니메이션 멈추고 녹색 고정 (직관성 강화) */
-      #canvas-container.ready-pulse:hover {
-        border-color: #4caf50;
-        animation: none;
+        animation: breatheGreen 4s infinite ease-in-out;
       }
       /* ======================================================== */
 
