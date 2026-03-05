@@ -54,7 +54,6 @@ function updateVolume(newVolumePercent) {
   volumeInput.value = newVolumePercent;
   volumeSlider.value = newVolumePercent;
 
-  // [개선] CSS의 변수(--val)에 현재 퍼센트(0~100%)를 주입하여 왼쪽 영역 색상을 채움
   const volPercent = (newVolumePercent / 300) * 100;
   volumeSlider.style.setProperty('--val', `${volPercent}%`);
 
@@ -69,7 +68,6 @@ function updateBPM(newBPM) {
   bpmInput.value = currentBPM;
   bpmSlider.value = currentBPM;
 
-  // [개선] BPM 슬라이더는 최소값이 30이므로 이에 맞춰 진척도를 0~100%로 계산
   const bpmPercent = ((currentBPM - 30) / (300 - 30)) * 100;
   bpmSlider.style.setProperty('--val', `${bpmPercent}%`);
 
@@ -230,17 +228,18 @@ async function ensureAudio() {
   }
 }
 
+// (next bar) 안내 문구 제거 로직 반영
 function renderStatus() {
   if (!statusText) return;
 
   if (!isPlaying) {
-    statusText.innerHTML = '<span>Stopped</span>';
+    statusText.innerHTML = '<span>Ready</span>';
     return;
   }
 
   if (pendingLabel) {
-    const q = 'next bar';
-    statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span> <span>(${q})</span>`;
+    // [개선] (next bar) 문구를 제거하여 시각적으로 더 깔끔하게 표시
+    statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span>`;
     return;
   }
 
@@ -327,7 +326,6 @@ document.addEventListener('visibilitychange', async () => {
   }
 });
 
-// 앱 로드 시 초기 슬라이더 게이지 색상 렌더링을 위해 호출
 updateVolume(100);
 updateBPM(60);
 
