@@ -32,10 +32,8 @@ let metricState = {
   errors: [],
 };
 
-// DOM
-const playBtn = document.getElementById('play-btn');
-const iconPlay = document.getElementById('icon-play');
-const iconStop = document.getElementById('icon-stop');
+// DOM 요소
+const canvasContainer = document.getElementById('canvas-container');
 const volumeInput = document.getElementById('volume-input');
 const volumeSlider = document.getElementById('volume-slider');
 const bpmInput = document.getElementById('bpm-input');
@@ -137,10 +135,12 @@ bpmDownBtn.addEventListener('click', () => {
 });
 beatNumerator.addEventListener('change', updateTimeSignature);
 beatDenominator.addEventListener('change', updateTimeSignature);
-playBtn.addEventListener('click', () =>
+keepAwakeToggle.addEventListener('change', toggleWakeLock);
+
+// 캔버스 컨테이너 클릭 시 재생/정지
+canvasContainer.addEventListener('click', () =>
   !isPlaying ? startMetronome() : stopMetronome()
 );
-keepAwakeToggle.addEventListener('change', toggleWakeLock);
 
 if (accToggle) {
   accToggle.addEventListener('change', (e) => {
@@ -236,13 +236,19 @@ async function ensureAudio() {
   }
 }
 
+// 상태 렌더링 및 캔버스 애니메이션 클래스 토글
 function renderStatus() {
   if (!statusText) return;
 
   if (!isPlaying) {
     statusText.innerHTML = '<span>Ready</span>';
+    // 대기 상태일 때 숨쉬는 애니메이션 클래스 추가
+    if (canvasContainer) canvasContainer.classList.add('ready-pulse');
     return;
   }
+
+  // 재생 시작 시 애니메이션 클래스 제거
+  if (canvasContainer) canvasContainer.classList.remove('ready-pulse');
 
   if (pendingLabel) {
     statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span>`;
@@ -289,10 +295,6 @@ async function startMetronome() {
   });
 
   isPlaying = true;
-
-  if (playBtn) playBtn.classList.add('stop');
-  if (iconPlay) iconPlay.style.display = 'none';
-  if (iconStop) iconStop.style.display = 'block';
   renderStatus();
 
   if (keepAwakeToggle.checked) {
@@ -306,11 +308,6 @@ function stopMetronome() {
   if (metronomeNode) metronomeNode.port.postMessage({ type: 'stop' });
 
   isPlaying = false;
-
-  if (playBtn) playBtn.classList.remove('stop');
-  if (iconPlay) iconPlay.style.display = 'block';
-  if (iconStop) iconStop.style.display = 'none';
-
   pendingLabel = null;
   renderStatus();
 
@@ -334,7 +331,10 @@ document.addEventListener('visibilitychange', async () => {
 
 updateVolume(100);
 updateBPM(60);
+// 초기 로드 시 대기(Ready) 애니메이션 적용을 위해 호출
+renderStatus();
 
+// p5.js 시각화 렌더링
 window.setup = function () {
   const canvas = createCanvas(400, 300);
   canvas.parent('canvas-container');
@@ -453,19 +453,17 @@ window.draw = function () {
     noStroke();
     let isAccent = isAccentEnabled && visualState.currentBeatIndex === 0;
 
-    // 외부 점등 (Base Color) - 스트로크 안쪽에 맞추기 위해 크기 축소 (lollipopSize - 3)
     if (isAccent) {
-      fill(244, 67, 54, visualState.flashAlpha); // #f44336 Red
+      fill(244, 67, 54, visualState.flashAlpha);
     } else {
-      fill(209, 209, 209, visualState.flashAlpha); // #d1d1d1 Light Gray
+      fill(209, 209, 209, visualState.flashAlpha);
     }
     ellipse(0, lollipopY, lollipopSize - 3, lollipopSize - 3);
 
-    // 내부 점등 (Core Color)
     if (isAccent) {
-      fill(255, 138, 128, visualState.flashAlpha); // #ff8a80 Light Red/Pink
+      fill(255, 138, 128, visualState.flashAlpha);
     } else {
-      fill(255, 255, 255, visualState.flashAlpha); // #ffffff White
+      fill(255, 255, 255, visualState.flashAlpha);
     }
 
     let coreSize = isAccent
@@ -549,7 +547,7 @@ window.draw = function () {
   text(leftLbl1, leftColonX, height - 35);
   text(leftLbl2, leftColonX, height - 15);
 
-  let leftValueX = leftColonX + 70;
+  let leftValueX = leftColonX + 60;
   textAlign(RIGHT, BOTTOM);
   text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
   text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);
