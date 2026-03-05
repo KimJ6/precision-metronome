@@ -54,10 +54,8 @@ function updateVolume(newVolumePercent) {
   volumeInput.value = newVolumePercent;
   volumeSlider.value = newVolumePercent;
 
-  // 500 기준 퍼센트 계산
   const volPercent = (newVolumePercent / 500) * 100;
 
-  // 300 이하(60%)일 때는 모두 회색, 300 초과 시 넘은 만큼만 빨간색 그라데이션 적용
   let trackBg;
   if (newVolumePercent <= 300) {
     trackBg = `linear-gradient(to right, #999 0%, #999 ${volPercent}%, #444 ${volPercent}%, #444 100%)`;
@@ -334,11 +332,9 @@ document.addEventListener('visibilitychange', async () => {
   }
 });
 
-// 초기화 시 슬라이더 게이지 업데이트
 updateVolume(100);
 updateBPM(60);
 
-// p5.js 시각화 렌더링
 window.setup = function () {
   const canvas = createCanvas(400, 300);
   canvas.parent('canvas-container');
@@ -371,6 +367,35 @@ window.draw = function () {
   let maxAngle = PI / 4;
   let directionMultiplier = visualState.currentBeatIndex % 2 === 0 ? 1 : -1;
   let angle = maxAngle * Math.sin(Math.PI * P) * directionMultiplier;
+
+  // --- 개선: LED 비트 인디케이터 양끝 가이드선에 완벽 정렬 ---
+  const dNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
+  const ledY = 25; // 캔버스 상단 위치
+  const ledRadius = 7; // 도트 크기
+
+  // 가이드선이 위치한 반경(200~210의 중간인 205)을 기준으로 최대 수평 거리 계산
+  const maxSwingX = Math.sin(PI / 4) * 205;
+  const startX = width / 2 - maxSwingX;
+  const endX = width / 2 + maxSwingX;
+
+  for (let i = 0; i < dNum; i++) {
+    const x =
+      dNum === 1 ? width / 2 : startX + (i * (endX - startX)) / (dNum - 1);
+
+    if (isPlaying && i === visualState.currentBeatIndex) {
+      if (i === 0 && isAccentEnabled) {
+        fill('#f44336'); // 강박
+      } else {
+        fill('#d1d1d1'); // 약박
+      }
+    } else {
+      fill('#333'); // 비활성
+    }
+
+    noStroke();
+    ellipse(x, ledY, ledRadius * 2, ledRadius * 2);
+  }
+  // ----------------------------------------
 
   translate(width / 2, height - 40);
 
@@ -482,20 +507,26 @@ window.draw = function () {
   textAlign(LEFT, BOTTOM);
   text(val2, rightValueX, height - 15);
 
-  let leftColonX = 55;
-  let leftValueX = 120;
+  let leftMargin = 15;
 
   fill(100);
   textSize(10);
   textAlign(LEFT, BOTTOM);
-  text('Engine', 15, height - 55);
+  text('Engine', leftMargin, height - 55);
 
   fill(150);
   textSize(12);
-  textAlign(RIGHT, BOTTOM);
-  text('Jitter :', leftColonX, height - 35);
-  text('Drift :', leftColonX, height - 15);
+  let leftLbl1 = 'Jitter :';
+  let leftLbl2 = 'Drift :';
 
+  let maxLeftLblWidth = Math.max(textWidth(leftLbl1), textWidth(leftLbl2));
+  let leftColonX = leftMargin + maxLeftLblWidth;
+
+  textAlign(RIGHT, BOTTOM);
+  text(leftLbl1, leftColonX, height - 35);
+  text(leftLbl2, leftColonX, height - 15);
+
+  let leftValueX = leftColonX + 60;
   textAlign(RIGHT, BOTTOM);
   text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
   text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);

@@ -84,7 +84,6 @@
         -webkit-appearance: none;
         appearance: none;
         background: transparent;
-        /* JS에서 계산된 그라데이션을 받기 위한 변수 */
         --track-bg: #444;
       }
 
@@ -384,20 +383,24 @@
         transform: translateX(16px);
       }
 
+      /* === 개선: 하단 안내문 폰트 사이즈 절대 고정 === */
       .info-text {
-        font-size: 12px;
+        font-size: 12px !important;
         color: #999;
         text-align: left;
         width: 440px;
         max-width: calc(100% - 40px);
         margin: -5px auto 0 auto;
         line-height: 1.6;
+        /* 모바일 브라우저의 자동 폰트 크기 조절 방지 */
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
       }
       .info-text p {
         margin: 12px 0;
       }
       .info-text .en-text {
-        font-size: 11px;
+        font-size: 11px !important;
         color: #666;
         display: block;
         margin-top: 2px;
