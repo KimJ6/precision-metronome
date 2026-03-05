@@ -267,25 +267,29 @@
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         user-select: none;
-        transition: border-color 0.2s ease;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
       }
 
-      /* 클릭(터치)하는 순간 피드백 */
+      /* 클릭(터치)하는 순간 피드백 (빛 효과도 즉시 제거) */
       #canvas-container:active {
         border-color: #555 !important;
+        box-shadow: none !important;
         animation: none !important;
       }
 
-      /* === 개선: 대기(Ready) 상태 애니메이션 시간 연장 (2.5s -> 4s) === */
+      /* === 개선: 대기(Ready) 상태 숨쉬는 은은한 테두리와 얇은 빛(Glow) 효과 === */
       @keyframes breatheGreen {
         0% {
           border-color: #333;
+          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
         }
         50% {
           border-color: #3b5e40;
+          box-shadow: 0 0 12px rgba(59, 94, 64, 0.4); /* 얇고 은은한 그라데이션 빛 */
         }
         100% {
           border-color: #333;
+          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
         }
       }
 
