@@ -75,14 +75,74 @@
         flex-grow: 1;
       }
 
+      /* === 커스텀 슬라이더 (채워지는 효과 적용) === */
       input[type='range'] {
         flex-grow: 1;
         width: 10px;
-        height: 6px;
         cursor: pointer;
         margin: 0;
-        accent-color: #d1d1d1;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        /* JS에서 넘겨주는 퍼센트 값을 받기 위한 변수 (기본 50%) */
+        --val: 50%;
       }
+
+      input[type='range']:focus {
+        outline: none;
+      }
+
+      /* 크롬, 사파리, 엣지용 트랙 (linear-gradient를 통해 왼쪽을 밝게 칠함) */
+      input[type='range']::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 6px;
+        background: linear-gradient(
+          to right,
+          #999 0%,
+          #999 var(--val),
+          #444 var(--val),
+          #444 100%
+        );
+        border-radius: 3px;
+      }
+
+      /* 크롬, 사파리, 엣지용 썸(동그라미) */
+      input[type='range']::-webkit-slider-thumb {
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #d1d1d1;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+        margin-top: -5px;
+      }
+
+      /* 파이어폭스용 트랙 (빈 영역) */
+      input[type='range']::-moz-range-track {
+        width: 100%;
+        height: 6px;
+        background: #444;
+        border-radius: 3px;
+      }
+
+      /* 파이어폭스용 프로그레스 (채워진 영역) */
+      input[type='range']::-moz-range-progress {
+        height: 6px;
+        background: #999;
+        border-radius: 3px;
+      }
+
+      /* 파이어폭스용 썸 */
+      input[type='range']::-moz-range-thumb {
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #d1d1d1;
+        cursor: pointer;
+        border: none;
+      }
+      /* =========================================== */
 
       .number-input {
         height: 38px;
@@ -341,14 +401,13 @@
         transform: translateX(16px);
       }
 
-      /* 하단 안내문: 좌측 정렬로 수정 및 여백 조율 */
       .info-text {
         font-size: 12px;
         color: #999;
-        text-align: left; /* 좌측 정렬 */
-        width: 440px; /* 위 박스들과 너비 동일하게 설정 */
+        text-align: left;
+        width: 440px;
         max-width: calc(100% - 40px);
-        margin: -5px auto 0 auto; /* 수평 중앙 정렬 유지하되 내부 텍스트만 좌측으로 */
+        margin: -5px auto 0 auto;
         line-height: 1.6;
       }
       .info-text p {
@@ -378,9 +437,6 @@
         .play-row {
           flex-direction: row !important;
           align-items: center !important;
-        }
-        .info-text {
-          width: calc(100% - 50px);
         }
       }
     </style>

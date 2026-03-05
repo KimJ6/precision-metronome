@@ -53,6 +53,11 @@ function updateVolume(newVolumePercent) {
   newVolumePercent = Math.max(0, Math.min(300, newVolumePercent));
   volumeInput.value = newVolumePercent;
   volumeSlider.value = newVolumePercent;
+
+  // [개선] CSS의 변수(--val)에 현재 퍼센트(0~100%)를 주입하여 왼쪽 영역 색상을 채움
+  const volPercent = (newVolumePercent / 300) * 100;
+  volumeSlider.style.setProperty('--val', `${volPercent}%`);
+
   currentVolume = newVolumePercent / 100;
   if (isPlaying) sendQuantizedSettings();
 }
@@ -63,6 +68,11 @@ function updateBPM(newBPM) {
   visualState.targetBPM = currentBPM;
   bpmInput.value = currentBPM;
   bpmSlider.value = currentBPM;
+
+  // [개선] BPM 슬라이더는 최소값이 30이므로 이에 맞춰 진척도를 0~100%로 계산
+  const bpmPercent = ((currentBPM - 30) / (300 - 30)) * 100;
+  bpmSlider.style.setProperty('--val', `${bpmPercent}%`);
+
   if (isPlaying) sendQuantizedSettings();
 }
 
@@ -138,7 +148,6 @@ async function ensureAudio() {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     audioContext.onstatechange = () => {
-      console.log('AudioContext state changed:', audioContext.state);
       if (
         audioContext.state === 'suspended' ||
         audioContext.state === 'interrupted'
@@ -230,7 +239,6 @@ function renderStatus() {
   }
 
   if (pendingLabel) {
-    // 1) 엔진이 마디(bar) 단위 퀀타이즈로 고정되었으므로 UI 표기도 고정
     const q = 'next bar';
     statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span> <span>(${q})</span>`;
     return;
@@ -241,8 +249,6 @@ function renderStatus() {
 
 function sendQuantizedSettings() {
   if (!metronomeNode) return;
-
-  // 2) 엔진으로 명령을 보낼 때 불필요해진 quantize 필드 전송 제거
   metronomeNode.port.postMessage({
     type: 'set',
     bpm: currentBPM,
@@ -320,6 +326,10 @@ document.addEventListener('visibilitychange', async () => {
     }
   }
 });
+
+// 앱 로드 시 초기 슬라이더 게이지 색상 렌더링을 위해 호출
+updateVolume(100);
+updateBPM(60);
 
 // p5.js 시각화 렌더링
 window.setup = function () {
@@ -433,7 +443,7 @@ window.draw = function () {
 
   if (pendingLabel) {
     fill('#f44336');
-    textSize(12);
+    textSize(14);
     textStyle(BOLD);
     textAlign(RIGHT, BOTTOM);
     text('PENDING', rightMargin, height - 88);
