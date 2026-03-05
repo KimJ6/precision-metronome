@@ -171,11 +171,11 @@
       .stepper .number-input {
         border: none;
         border-radius: 0;
-        width: 32px;
+        width: 36px; /* 18px 폰트에 맞춰 너비를 살짝 넓힘 (기존 32px) */
         height: 100%;
         background: transparent;
         padding: 0;
-        font-size: 16px;
+        font-size: 18px; /* BPM 메인 폰트와 동일하게 수정 (기존 16px) */
       }
 
       .step-btn {
@@ -277,7 +277,7 @@
         animation: none !important;
       }
 
-      /* === 개선: 대기(Ready) 상태 숨쉬는 은은한 테두리와 얇은 빛(Glow) 효과 === */
+      /* === 대기(Ready) 상태 숨쉬는 은은한 테두리와 얇은 빛(Glow) 효과 === */
       @keyframes breatheGreen {
         0% {
           border-color: #333;
@@ -285,7 +285,7 @@
         }
         50% {
           border-color: #3b5e40;
-          box-shadow: 0 0 12px rgba(59, 94, 64, 0.4); /* 얇고 은은한 그라데이션 빛 */
+          box-shadow: 0 0 12px rgba(59, 94, 64, 0.4);
         }
         100% {
           border-color: #333;
