@@ -483,7 +483,7 @@ window.draw = function () {
   text(val2, rightValueX, height - 15);
 
   let leftColonX = 55;
-  let leftValueX = 115;
+  let leftValueX = 120;
 
   fill(100);
   textSize(10);
