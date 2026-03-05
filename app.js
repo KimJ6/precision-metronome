@@ -9,6 +9,7 @@ let currentVolume = 1.0;
 let currentBPM = 60;
 let beatsPerBar = 4;
 let currentDenominator = 4;
+let isAccentEnabled = true;
 
 const QUANTIZE_MODE = 'bar';
 
@@ -19,6 +20,9 @@ let visualState = {
   duration: 1.0,
   flashAlpha: 0,
   targetBPM: 60,
+  playingBPM: 60,
+  playingNumerator: 4,
+  playingDenominator: 4,
 };
 let pendingLabel = null;
 
@@ -41,6 +45,7 @@ const bpmDownBtn = document.getElementById('bpm-down');
 const stepInput = document.getElementById('step-input');
 const beatNumerator = document.getElementById('beat-numerator');
 const beatDenominator = document.getElementById('beat-denominator');
+const accToggle = document.getElementById('acc-toggle');
 const statusText = document.getElementById('status-text');
 const keepAwakeToggle = document.getElementById('keep-awake-toggle');
 
@@ -121,26 +126,37 @@ playBtn.addEventListener('click', () =>
 );
 keepAwakeToggle.addEventListener('change', toggleWakeLock);
 
+if (accToggle) {
+  accToggle.addEventListener('change', (e) => {
+    isAccentEnabled = e.target.checked;
+    if (isPlaying) sendQuantizedSettings();
+  });
+}
+
 async function ensureAudio() {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    
+
     audioContext.onstatechange = () => {
       console.log('AudioContext state changed:', audioContext.state);
-      if (audioContext.state === 'suspended' || audioContext.state === 'interrupted') {
+      if (
+        audioContext.state === 'suspended' ||
+        audioContext.state === 'interrupted'
+      ) {
         if (isPlaying) {
           stopMetronome();
-          if (statusText) statusText.textContent = 'Interrupted';
+          if (statusText) statusText.innerHTML = '<span>Interrupted</span>';
         }
       }
     };
   }
-  
+
   if (audioContext.state === 'suspended') await audioContext.resume();
 
   if (!metronomeNode) {
-    // Vite 빌드 시 파싱 오류 방지를 위해 명시적 .href 경로 추가
-    await audioContext.audioWorklet.addModule(new URL('./metronome-worklet.js', import.meta.url).href);
+    await audioContext.audioWorklet.addModule(
+      new URL('./metronome-worklet.js', import.meta.url).href
+    );
 
     metronomeNode = new AudioWorkletNode(audioContext, 'metronome-processor', {
       numberOfInputs: 0,
@@ -160,37 +176,43 @@ async function ensureAudio() {
           beatIndex: msg.beatIndex,
           bpm: msg.bpm,
           denominator: msg.denominator,
+          numerator: msg.numerator,
         });
 
-        // [개선 반영] 탭이 백그라운드로 이동해 requestAnimationFrame이 멈췄을 때
-        // 큐가 무한정 쌓여 렌더링 스파이크(Jank)가 발생하는 것을 방지 (최대 200개 유지)
         if (noteQueue.length > 200) {
           noteQueue.shift();
         }
 
         metricState.driftMs = msg.driftMs;
 
-        if (typeof msg.intervalMs === 'number' && Number.isFinite(msg.intervalMs)) {
-          
+        if (
+          typeof msg.intervalMs === 'number' &&
+          Number.isFinite(msg.intervalMs)
+        ) {
           if (msg.appliedPending) {
             metricState.errors = [];
-            pendingLabel = null; 
+            pendingLabel = null;
             renderStatus();
           }
 
-          let expectedIntervalMs = (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
+          let expectedIntervalMs =
+            (60.0 / msg.bpm) * (4.0 / msg.denominator) * 1000;
           let error = msg.intervalMs - expectedIntervalMs;
 
           metricState.errors.push(error);
           if (metricState.errors.length > 50) metricState.errors.shift();
 
-          let sumSq = metricState.errors.reduce((acc, val) => acc + val * val, 0);
-          metricState.jitterMs = metricState.errors.length > 0 ? Math.sqrt(sumSq / metricState.errors.length) : 0;
-        } else {
-          console.warn('Invalid intervalMs received, skipping Jitter update.');
+          let sumSq = metricState.errors.reduce(
+            (acc, val) => acc + val * val,
+            0
+          );
+          metricState.jitterMs =
+            metricState.errors.length > 0
+              ? Math.sqrt(sumSq / metricState.errors.length)
+              : 0;
         }
       }
-      
+
       if (msg.type === 'pending') {
         pendingLabel = msg.pending;
         renderStatus();
@@ -203,28 +225,31 @@ function renderStatus() {
   if (!statusText) return;
 
   if (!isPlaying) {
-    statusText.textContent = 'Stopped';
+    statusText.innerHTML = '<span>Stopped</span>';
     return;
   }
 
   if (pendingLabel) {
-    const q = pendingLabel.quantize === 'bar' ? 'next bar' : 'next beat';
-    statusText.textContent = `Pending: ${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator} (${q})`;
+    // 1) 엔진이 마디(bar) 단위 퀀타이즈로 고정되었으므로 UI 표기도 고정
+    const q = 'next bar';
+    statusText.innerHTML = `<span>Pending</span> <span>${pendingLabel.bpm} BPM, ${pendingLabel.numerator}/${pendingLabel.denominator}</span> <span>(${q})</span>`;
     return;
   }
 
-  statusText.textContent = `Running: ${currentBPM} BPM, ${beatsPerBar}/${currentDenominator}`;
+  statusText.innerHTML = `<span>Running</span> <span>${currentBPM} BPM, ${beatsPerBar}/${currentDenominator}</span>`;
 }
 
 function sendQuantizedSettings() {
   if (!metronomeNode) return;
+
+  // 2) 엔진으로 명령을 보낼 때 불필요해진 quantize 필드 전송 제거
   metronomeNode.port.postMessage({
     type: 'set',
     bpm: currentBPM,
     numerator: beatsPerBar,
     denominator: currentDenominator,
     volume: currentVolume,
-    quantize: QUANTIZE_MODE,
+    accentEnabled: isAccentEnabled,
   });
 }
 
@@ -236,6 +261,10 @@ async function startMetronome() {
   visualState.currentBeatIndex = 0;
   visualState.flashAlpha = 0;
   pendingLabel = null;
+
+  visualState.playingBPM = currentBPM;
+  visualState.playingNumerator = beatsPerBar;
+  visualState.playingDenominator = currentDenominator;
 
   metricState.driftMs = 0;
   metricState.jitterMs = 0;
@@ -249,7 +278,7 @@ async function startMetronome() {
   });
 
   isPlaying = true;
-  
+
   if (playBtn) playBtn.classList.add('stop');
   if (iconPlay) iconPlay.style.display = 'none';
   if (iconStop) iconStop.style.display = 'block';
@@ -266,11 +295,11 @@ function stopMetronome() {
   if (metronomeNode) metronomeNode.port.postMessage({ type: 'stop' });
 
   isPlaying = false;
-  
+
   if (playBtn) playBtn.classList.remove('stop');
   if (iconPlay) iconPlay.style.display = 'block';
   if (iconStop) iconStop.style.display = 'none';
-  
+
   pendingLabel = null;
   renderStatus();
 
@@ -300,7 +329,7 @@ window.setup = function () {
 };
 
 window.draw = function () {
-  background(30);
+  background('#1a1a1a');
   const currentTime = audioContext ? audioContext.currentTime : 0;
 
   while (noteQueue.length > 0 && noteQueue[0].noteTime <= currentTime) {
@@ -310,6 +339,10 @@ window.draw = function () {
     visualState.duration =
       (60.0 / currentNote.bpm) * (4.0 / currentNote.denominator);
     visualState.flashAlpha = 255;
+
+    visualState.playingBPM = currentNote.bpm;
+    visualState.playingNumerator = currentNote.numerator;
+    visualState.playingDenominator = currentNote.denominator;
   }
 
   let P = 0;
@@ -353,7 +386,8 @@ window.draw = function () {
   let flashR = 255,
     flashG = 255,
     flashB = 255;
-  if (visualState.currentBeatIndex === 0) {
+
+  if (isAccentEnabled && visualState.currentBeatIndex === 0) {
     flashG = 50;
     flashB = 50;
   }
@@ -391,18 +425,33 @@ window.draw = function () {
 
   let rightMargin = width - 15;
 
+  let displayBPM = isPlaying ? visualState.playingBPM : currentBPM;
+  let displayNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
+  let displayDen = isPlaying
+    ? visualState.playingDenominator
+    : currentDenominator;
+
+  if (pendingLabel) {
+    fill('#f44336');
+    textSize(12);
+    textStyle(BOLD);
+    textAlign(RIGHT, BOTTOM);
+    text('PENDING', rightMargin, height - 88);
+    textStyle(NORMAL);
+  }
+
   textAlign(RIGHT, BOTTOM);
   fill(255);
   textSize(24);
-  text(`${currentBPM} BPM`, rightMargin, height - 60);
+  text(`${displayBPM} BPM`, rightMargin, height - 60);
 
   textSize(12);
-  let val1 = `${beatsPerBar}/${currentDenominator}`;
+  let val1 = `${displayNum}/${displayDen}`;
   let val2 = `${QUANTIZE_MODE}`;
-  
+
   let maxValWidth = Math.max(textWidth(val1), textWidth(val2));
-  let rightValueX = rightMargin - maxValWidth; 
-  let rightColonX = rightValueX - 8;           
+  let rightValueX = rightMargin - maxValWidth;
+  let rightColonX = rightValueX - 8;
 
   fill(200);
   textAlign(RIGHT, BOTTOM);
@@ -416,11 +465,11 @@ window.draw = function () {
   textAlign(LEFT, BOTTOM);
   text(val2, rightValueX, height - 15);
 
-  let leftColonX = 55;  
-  let leftValueX = 125; 
+  let leftColonX = 55;
+  let leftValueX = 115;
 
   fill(100);
-  textSize(11);
+  textSize(10);
   textAlign(LEFT, BOTTOM);
   text('Engine', 15, height - 55);
 

@@ -37,7 +37,8 @@
       }
 
       .controls {
-        background: #2a2a2a;
+        background: #1a1a1a;
+        border: 2px solid #333;
         padding: 25px;
         border-radius: 12px;
         display: flex;
@@ -54,7 +55,6 @@
         align-items: center;
       }
 
-      /* 라벨 텍스트 사이즈를 수치 입력칸과 동일한 18px로 통일 */
       .control-group label,
       .toggle-container label {
         font-size: 18px;
@@ -63,7 +63,6 @@
         white-space: nowrap;
       }
 
-      /* 글자가 18px로 커진 만큼 너비를 75px -> 85px로 늘려 정렬 기준 유지 */
       .slider-label {
         width: 85px;
         flex-shrink: 0;
@@ -82,9 +81,9 @@
         height: 6px;
         cursor: pointer;
         margin: 0;
+        accent-color: #d1d1d1;
       }
 
-      /* 수치 입력칸 (18px) */
       .number-input {
         height: 38px;
         font-size: 18px;
@@ -98,7 +97,7 @@
         box-sizing: border-box;
       }
       .number-input:focus {
-        border-color: #4caf50;
+        border-color: #d1d1d1;
       }
 
       input[type='number']::-webkit-inner-spin-button,
@@ -127,7 +126,6 @@
         flex-shrink: 0;
       }
 
-      /* Stepper 안의 단위 숫자는 좁은 공간을 위해 살짝 작게 유지 (16px) */
       .stepper .number-input {
         border: none;
         border-radius: 0;
@@ -158,7 +156,8 @@
         background-color: #666;
       }
       .step-btn:active {
-        background-color: #4caf50;
+        background-color: #d1d1d1;
+        color: #1a1a1a;
       }
 
       .play-stop-btn {
@@ -181,13 +180,11 @@
       .play-stop-btn.stop {
         background-color: #f44336;
       }
-
       .play-stop-btn svg {
         width: 36px;
         height: 36px;
         fill: currentColor;
       }
-
       #icon-play {
         margin-left: 0;
       }
@@ -199,9 +196,6 @@
         color: #ffffff;
         white-space: nowrap;
       }
-      .app-title .red-t {
-        color: #f44336;
-      }
 
       .time-signature-group {
         display: flex;
@@ -209,6 +203,19 @@
         gap: 10px;
         flex-grow: 1;
         justify-content: flex-end;
+      }
+
+      .acc-toggle-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 3px;
+      }
+      .acc-toggle-wrapper span {
+        font-size: 14px;
+        font-weight: bold;
+        color: #aaa;
+        letter-spacing: 0.5px;
       }
 
       select {
@@ -225,7 +232,7 @@
         text-align: center;
       }
       select:focus {
-        border-color: #4caf50;
+        border-color: #d1d1d1;
       }
       select option {
         background: #333;
@@ -236,7 +243,7 @@
         border: 2px solid #333;
         border-radius: 12px;
         overflow: hidden;
-        background: #222;
+        background: #1a1a1a;
         width: 440px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
@@ -254,8 +261,16 @@
       .lookahead-ui {
         font-size: 14px;
         color: #888;
-        text-align: right;
-        height: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        align-items: center;
+        column-gap: 5px;
+        row-gap: 3px;
+        min-height: 24px;
+      }
+      .lookahead-ui span {
+        white-space: nowrap;
       }
 
       .toggle-container {
@@ -264,7 +279,8 @@
         justify-content: space-between;
         width: 440px;
         max-width: calc(100% - 40px);
-        background: #2a2a2a;
+        background: #1a1a1a;
+        border: 2px solid #333;
         padding: 15px 25px;
         border-radius: 12px;
         box-sizing: border-box;
@@ -304,27 +320,45 @@
         border-radius: 50%;
       }
       input:checked + .slider {
-        background-color: #4caf50;
+        background-color: #d1d1d1;
       }
       input:checked + .slider:before {
         transform: translateX(22px);
+        background-color: #1a1a1a;
       }
 
+      .switch.small {
+        width: 36px;
+        height: 20px;
+      }
+      .switch.small .slider:before {
+        height: 14px;
+        width: 14px;
+        left: 3px;
+        bottom: 3px;
+      }
+      .switch.small input:checked + .slider:before {
+        transform: translateX(16px);
+      }
+
+      /* 하단 안내문: 좌측 정렬로 수정 및 여백 조율 */
       .info-text {
         font-size: 12px;
         color: #999;
-        text-align: center;
-        width: 440px;
+        text-align: left; /* 좌측 정렬 */
+        width: 440px; /* 위 박스들과 너비 동일하게 설정 */
         max-width: calc(100% - 40px);
-        margin-top: -5px;
-        line-height: 1.5;
+        margin: -5px auto 0 auto; /* 수평 중앙 정렬 유지하되 내부 텍스트만 좌측으로 */
+        line-height: 1.6;
       }
       .info-text p {
-        margin: 8px 0;
+        margin: 12px 0;
       }
       .info-text .en-text {
         font-size: 11px;
         color: #666;
+        display: block;
+        margin-top: 2px;
       }
 
       @media (max-width: 480px) {
@@ -345,6 +379,9 @@
           flex-direction: row !important;
           align-items: center !important;
         }
+        .info-text {
+          width: calc(100% - 50px);
+        }
       }
     </style>
   </head>
@@ -364,13 +401,9 @@
             <path d="M5 5h14v14H5z" />
           </svg>
         </button>
-        <div class="app-title">Precision<span class="red-t">T</span>ick</div>
-        <div
-          class="lookahead-ui"
-          id="status-text"
-          style="flex-grow: 1; text-align: right"
-        >
-          Ready
+        <div class="app-title">PrecisionTick</div>
+        <div class="lookahead-ui" id="status-text" style="flex-grow: 1">
+          <span>Ready</span>
         </div>
       </div>
 
@@ -428,6 +461,13 @@
       <div class="control-group">
         <label>Time Signature</label>
         <div class="time-signature-group">
+          <div class="acc-toggle-wrapper">
+            <span>ACC</span>
+            <label class="switch small" title="강박(Accent) 켜기/끄기">
+              <input type="checkbox" id="acc-toggle" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
           <input
             type="number"
             id="beat-numerator"
@@ -459,15 +499,16 @@
 
     <div class="info-text">
       <p>
-        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br /><span
-          class="en-text"
+        설정 변경 사항은 다음 마디의 첫 강박부터 적용됩니다.<br />
+        <span class="en-text"
           >Settings changes are applied from the first downbeat of the next
           bar.</span
         >
       </p>
       <p>
-        Jitter / Drift는 오디오 엔진의 타이밍 안정도를 나타내는 내부 계산
-        값입니다.<br /><span class="en-text"
+        Jitter, Drift는 오디오 엔진의 타이밍 안정도를 나타내는 내부 계산
+        값입니다.<br />
+        <span class="en-text"
           >Jitter and Drift are internally calculated values representing the
           audio engine's timing stability.</span
         >

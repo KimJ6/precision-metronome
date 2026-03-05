@@ -1,8 +1,8 @@
 // AudioWorkletProcessor 기반 메트로놈 엔진
 // - SampleClock(샘플 단위 카운터) 기반 tick
 // - Bresenham(정수+잔차 누적) 스케줄링으로 비정수 박 길이 장기 평균 정확도 확보
-// - Quantize 정책은 "엔진 모드(this.quantize)"가 소유 (pending에 quantize를 섞지 않음)
-// - Stop은 오디오/스케줄만 멈추고, 지표(틱 카운트)는 start에서 세션 기준으로 초기화
+// - Quantize 정책은 'bar'(마디) 단위로 완전 고정됨
+// - ACC(Accent) 상태는 음악적 구조에 해당하므로 pending에 포함하여 경계에서 동기화 적용
 
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -15,48 +15,45 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.numerator = 4;
     this.denominator = 4;
     this.volume = 1.0;
+    this.accentEnabled = true;
 
-    // Quantize mode is an engine policy (NOT part of pending)
-    // 'bar' = next bar downbeat, 'beat' = next beat
-    this.quantize = 'bar';
-
-    // Pending params (applied at quantized boundary)
+    // Pending params
     this.pending = null;
 
-    // Beat/bar counters
+    // Counters & Timing
     this.beatIndex = 0;
     this.barIndex = 0;
-
-    // Absolute sample counter (never reset)
     this.totalSamples = 0;
-
-    // Countdown to next tick in samples
     this.samplesUntilNextTick = 0;
-
-    // Timing (samples/beat)
     this.exactSamplesPerBeat = 0.0;
     this.intSamplesPerBeat = 0;
     this.fracSamplesPerBeat = 0.0;
     this.fracAcc = 0.0;
 
-    // Metrics (engine-internal)
+    // Metrics
     this.referenceSample = 0;
     this.tickCounter = 0;
     this.lastTickSample = -1;
-
-    // Start reference latch
     this.needStartReference = false;
 
-    // Click synth
-    this.env = 0.0;
-    this.envDecay = 0.0;
-    this.phase = 0.0;
-    this.freq = 440;        // 일반 박자: A4 음높이 (저피치 튜닝)
-    this.accentFreq = 880;  // 강박: 한 옥타브 위 (저피치 튜닝)
+    // --- Click Synth (Dual-tone Synthesis) ---
+    // 1. Body (저음역대: 편안한 음정과 톡톡거리는 바디감)
+    this.envBody = 0.0;
+    this.envDecayBody = 0.0;
+    this.phaseBody = 0.0;
+    this.baseFreq = 440;
+    this.accentFreq = 880;
+    this.freq = this.baseFreq;
+
+    // 2. Attack (고음역대: 칼박을 잡아주는 1.5ms의 매우 짧고 날카로운 타격음)
+    this.envClick = 0.0;
+    this.envDecayClick = 0.0;
+    this.phaseClick = 0.0;
+    this.clickFreq = 4000;
 
     this._recomputeTiming();
-    // 감쇠 상수를 0.007(7ms)로 설정하여 낮은 피치에서도 뭉개지지 않고 "톡" 끊어지도록 조정
-    this._setClickEnvelopeTimeConstant(0.007);
+    // 바디는 5ms로 둔탁함을 잡고, 어택은 1.5ms로 쪼개어 클릭감 극대화
+    this._setClickEnvelopes(0.005, 0.0015);
 
     this.port.onmessage = (event) => {
       const msg = event.data;
@@ -64,43 +61,34 @@ class MetronomeProcessor extends AudioWorkletProcessor {
 
       if (msg.type === 'start') {
         this.running = true;
-
         const startDelaySec =
           typeof msg.startDelaySec === 'number' ? msg.startDelaySec : 0.05;
-
-        // Do NOT reset totalSamples (absolute timeline must keep flowing)
         this.samplesUntilNextTick = Math.max(
           0,
           Math.floor(startDelaySec * sampleRate)
         );
-
-        // Reset session metrics (start defines a new measurement session)
         this.fracAcc = 0.0;
         this.tickCounter = 0;
         this.lastTickSample = -1;
         this.needStartReference = true;
-
         if (msg.align !== false) {
           this.beatIndex = 0;
           this.barIndex = 0;
         }
-
         this.port.postMessage({ type: 'state', running: true });
         return;
       }
 
       if (msg.type === 'stop') {
-        // Stop = silence + stop scheduling (metrics will reset on next start)
         this.running = false;
-        this.env = 0.0;
+        this.envBody = 0.0;
+        this.envClick = 0.0;
         this.samplesUntilNextTick = 0;
-
         this.port.postMessage({ type: 'state', running: false });
         return;
       }
 
       if (msg.type === 'set') {
-        // Pending excludes quantize policy: quantize is owned by engine (this.quantize)
         const next = {
           bpm: this._clampNumber(msg.bpm, 30, 300, this.bpm),
           numerator: this._clampInt(msg.numerator, 1, 32, this.numerator),
@@ -109,18 +97,16 @@ class MetronomeProcessor extends AudioWorkletProcessor {
             this.denominator
           ),
           volume: this._clampNumber(msg.volume, 0, 3.0, this.volume),
+          accentEnabled:
+            typeof msg.accentEnabled === 'boolean'
+              ? msg.accentEnabled
+              : this.accentEnabled,
         };
-
-        // Optional: allow changing quantize mode explicitly (engine policy)
-        if (msg.quantize === 'bar' || msg.quantize === 'beat') {
-          this.quantize = msg.quantize;
-        }
 
         this.pending = next;
         this.port.postMessage({
           type: 'pending',
           pending: next,
-          quantize: this.quantize,
         });
         return;
       }
@@ -128,14 +114,16 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   }
 
   _clampNumber(v, min, max, fallback) {
-    if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
-    return Math.min(max, Math.max(min, v));
+    return typeof v !== 'number' || !Number.isFinite(v)
+      ? fallback
+      : Math.min(max, Math.max(min, v));
   }
 
   _clampInt(v, min, max, fallback) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, Math.round(n)));
+    return !Number.isFinite(n)
+      ? fallback
+      : Math.min(max, Math.max(min, Math.round(n)));
   }
 
   _clampDenominator(v, fallback) {
@@ -147,24 +135,24 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   _recomputeTiming() {
     const secondsPerBeat = (60.0 / this.bpm) * (4.0 / this.denominator);
     this.exactSamplesPerBeat = Math.max(1e-9, secondsPerBeat * sampleRate);
-
     this.intSamplesPerBeat = Math.max(1, Math.floor(this.exactSamplesPerBeat));
     this.fracSamplesPerBeat = this.exactSamplesPerBeat - this.intSamplesPerBeat;
   }
 
-  _setClickEnvelopeTimeConstant(tauSec) {
-    const tau = Math.max(0.001, tauSec);
-    this.envDecay = Math.exp(-1.0 / (tau * sampleRate));
+  _setClickEnvelopes(bodyTauSec, clickTauSec) {
+    this.envDecayBody = Math.exp(
+      -1.0 / (Math.max(0.001, bodyTauSec) * sampleRate)
+    );
+    this.envDecayClick = Math.exp(
+      -1.0 / (Math.max(0.0001, clickTauSec) * sampleRate)
+    );
   }
 
   _shouldApplyPendingAtThisBoundary() {
     if (!this.pending) return false;
-    if (this.quantize === 'beat') return true;
-    // 'bar' mode: apply only at downbeat
     return this.beatIndex === 0;
   }
 
-  // Returns boolean: applied or not
   _applyPending(currentSample) {
     if (!this.pending) return false;
 
@@ -172,23 +160,26 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.numerator = this.pending.numerator;
     this.denominator = this.pending.denominator;
     this.volume = this.pending.volume;
+    this.accentEnabled = this.pending.accentEnabled;
 
     this.pending = null;
-
     this._recomputeTiming();
 
-    // Reset measurement reference at the exact tick sample
     this.referenceSample = currentSample;
     this.tickCounter = 0;
     this.fracAcc = 0.0;
-
     return true;
   }
 
   _triggerTick(exactTime, driftMs, intervalMs, appliedPending) {
-    // 저피치 튜닝 주파수 적용
-    this.freq = this.beatIndex === 0 ? this.accentFreq : 440;
-    this.env = 1.0;
+    this.freq =
+      this.accentEnabled && this.beatIndex === 0
+        ? this.accentFreq
+        : this.baseFreq;
+
+    // 타격 발생 시 바디와 어택 엔벨로프를 동시에 활성화
+    this.envBody = 1.0;
+    this.envClick = 1.0;
 
     this.port.postMessage({
       type: 'tick',
@@ -216,25 +207,19 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     const ch1 = output.length > 1 ? output[1] : null;
     if (!ch0) return true;
 
-    const blockSize = ch0.length;
-
     if (!this.running) {
-      for (let i = 0; i < blockSize; i++) {
+      for (let i = 0; i < ch0.length; i++) {
         ch0[i] = 0.0;
         if (ch1) ch1[i] = 0.0;
       }
-      // Absolute timeline keeps flowing even when stopped
-      this.totalSamples += blockSize;
+      this.totalSamples += ch0.length;
       return true;
     }
 
     let samplesToTick = this.samplesUntilNextTick;
-
-    for (let i = 0; i < blockSize; i++) {
+    for (let i = 0; i < ch0.length; i++) {
       const currentSample = this.totalSamples + i;
-
       if (samplesToTick <= 0) {
-        // Establish session reference at the first actual tick after start
         if (this.needStartReference) {
           this.referenceSample = currentSample;
           this.tickCounter = 0;
@@ -242,26 +227,21 @@ class MetronomeProcessor extends AudioWorkletProcessor {
           this.needStartReference = false;
         }
 
-        // Quantized commit
         let appliedPending = false;
         if (this._shouldApplyPendingAtThisBoundary()) {
           appliedPending = this._applyPending(currentSample);
         }
 
-        // Metrics (engine-internal)
         const exactIdealSample =
           this.referenceSample + this.tickCounter * this.exactSamplesPerBeat;
         const driftMs =
           ((currentSample - exactIdealSample) / sampleRate) * 1000.0;
-
         const intervalMs =
           this.lastTickSample !== -1
             ? ((currentSample - this.lastTickSample) / sampleRate) * 1000.0
             : (this.exactSamplesPerBeat / sampleRate) * 1000.0;
 
         this.lastTickSample = currentSample;
-
-        // Emit tick
         this._triggerTick(
           currentTime + i / sampleRate,
           driftMs,
@@ -269,36 +249,43 @@ class MetronomeProcessor extends AudioWorkletProcessor {
           appliedPending
         );
 
-        // Bresenham scheduling (integer + residual accumulation)
         let nextInterval = this.intSamplesPerBeat;
         this.fracAcc += this.fracSamplesPerBeat;
         if (this.fracAcc >= 1.0) {
           nextInterval += 1;
           this.fracAcc -= 1.0;
         }
-
         samplesToTick += nextInterval;
         this.tickCounter++;
       }
 
-      // Click synth
+      // 두 가지 소리(바디 + 어택 클릭)를 합성 (Mixing)
       let s = 0.0;
-      if (this.env > 1e-5) {
-        this.phase += 2 * Math.PI * (this.freq / sampleRate);
-        if (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI;
 
-        s = Math.sin(this.phase) * this.env * this.volume;
-        this.env *= this.envDecay;
+      // 1. 편안한 피치를 제공하는 바디 톤
+      if (this.envBody > 1e-5) {
+        this.phaseBody += 2 * Math.PI * (this.freq / sampleRate);
+        if (this.phaseBody > 2 * Math.PI) this.phaseBody -= 2 * Math.PI;
+        s += Math.sin(this.phaseBody) * this.envBody;
+        this.envBody *= this.envDecayBody;
       }
+
+      // 2. 극도로 짧고 날카로운 어택 클릭 톤 (게인을 0.5로 낮추어 자연스럽게 믹스)
+      if (this.envClick > 1e-5) {
+        this.phaseClick += 2 * Math.PI * (this.clickFreq / sampleRate);
+        if (this.phaseClick > 2 * Math.PI) this.phaseClick -= 2 * Math.PI;
+        s += Math.sin(this.phaseClick) * this.envClick * 0.5;
+        this.envClick *= this.envDecayClick;
+      }
+
+      s *= this.volume;
 
       ch0[i] = s;
       if (ch1) ch1[i] = s;
-
       samplesToTick -= 1;
     }
-
     this.samplesUntilNextTick = samplesToTick;
-    this.totalSamples += blockSize;
+    this.totalSamples += ch0.length;
     return true;
   }
 }
