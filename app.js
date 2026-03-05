@@ -368,12 +368,11 @@ window.draw = function () {
   let directionMultiplier = visualState.currentBeatIndex % 2 === 0 ? 1 : -1;
   let angle = maxAngle * Math.sin(Math.PI * P) * directionMultiplier;
 
-  // --- 개선: LED 비트 인디케이터 양끝 가이드선에 완벽 정렬 ---
+  // --- 상단 LED 비트 인디케이터 ---
   const dNum = isPlaying ? visualState.playingNumerator : beatsPerBar;
-  const ledY = 25; // 캔버스 상단 위치
-  const ledRadius = 7; // 도트 크기
+  const ledY = 25;
+  const ledRadius = 7;
 
-  // 가이드선이 위치한 반경(200~210의 중간인 205)을 기준으로 최대 수평 거리 계산
   const maxSwingX = Math.sin(PI / 4) * 205;
   const startX = width / 2 - maxSwingX;
   const endX = width / 2 + maxSwingX;
@@ -381,24 +380,35 @@ window.draw = function () {
   for (let i = 0; i < dNum; i++) {
     const x =
       dNum === 1 ? width / 2 : startX + (i * (endX - startX)) / (dNum - 1);
+    const isLit = isPlaying && i === visualState.currentBeatIndex;
 
-    if (isPlaying && i === visualState.currentBeatIndex) {
-      if (i === 0 && isAccentEnabled) {
-        fill('#f44336'); // 강박
-      } else {
-        fill('#d1d1d1'); // 약박
-      }
+    if (isLit) {
+      if (i === 0 && isAccentEnabled) fill('#f44336'); // 강박
+      else fill('#d1d1d1'); // 약박
     } else {
       fill('#333'); // 비활성
     }
 
     noStroke();
     ellipse(x, ledY, ledRadius * 2, ledRadius * 2);
+
+    if (isLit) {
+      let coreColor, coreDiameter;
+      if (i === 0 && isAccentEnabled) {
+        coreColor = '#ff8a80';
+        coreDiameter = ledRadius * 1.4;
+      } else {
+        coreColor = '#ffffff';
+        coreDiameter = ledRadius * 1.3;
+      }
+      fill(coreColor);
+      ellipse(x, ledY, coreDiameter, coreDiameter);
+    }
   }
-  // ----------------------------------------
 
   translate(width / 2, height - 40);
 
+  // 뒤쪽 배경 가이드라인
   push();
   stroke(255);
   strokeWeight(4);
@@ -412,12 +422,14 @@ window.draw = function () {
   pop();
   pop();
 
+  // 중심축 삼각형
   push();
   noStroke();
   fill(255, 50, 50);
   triangle(-6, -215, 6, -215, 0, -205);
   pop();
 
+  // 바늘(추) 렌더링
   push();
   rotate(angle);
 
@@ -425,37 +437,46 @@ window.draw = function () {
   let lollipopY = -140;
   let lollipopSize = 24;
 
-  let flashR = 255,
-    flashG = 255,
-    flashB = 255;
-
-  if (isAccentEnabled && visualState.currentBeatIndex === 0) {
-    flashG = 50;
-    flashB = 50;
-  }
-
-  if (visualState.flashAlpha > 0) {
-    noStroke();
-    fill(flashR, flashG, flashB, visualState.flashAlpha * 0.4);
-    ellipse(0, lollipopY, lollipopSize * 2.5, lollipopSize * 2.5);
-  }
-
+  // 1. 바늘 막대기
   stroke(255);
   strokeWeight(3);
   line(0, 0, 0, -needleLength);
 
+  // 2. 바늘 추 테두리 및 기본 색상 (불 꺼진 상태)
   stroke(255);
   strokeWeight(3);
   fill(100);
   ellipse(0, lollipopY, lollipopSize, lollipopSize);
 
+  // 3. 점등 효과 (테두리 안쪽에서만 빛나도록 LED 스타일 적용)
   if (visualState.flashAlpha > 0) {
     noStroke();
-    fill(flashR, flashG, flashB, visualState.flashAlpha);
+    let isAccent = isAccentEnabled && visualState.currentBeatIndex === 0;
+
+    // 외부 점등 (Base Color) - 스트로크 안쪽에 맞추기 위해 크기 축소 (lollipopSize - 3)
+    if (isAccent) {
+      fill(244, 67, 54, visualState.flashAlpha); // #f44336 Red
+    } else {
+      fill(209, 209, 209, visualState.flashAlpha); // #d1d1d1 Light Gray
+    }
     ellipse(0, lollipopY, lollipopSize - 3, lollipopSize - 3);
+
+    // 내부 점등 (Core Color)
+    if (isAccent) {
+      fill(255, 138, 128, visualState.flashAlpha); // #ff8a80 Light Red/Pink
+    } else {
+      fill(255, 255, 255, visualState.flashAlpha); // #ffffff White
+    }
+
+    let coreSize = isAccent
+      ? (lollipopSize - 3) * 0.7
+      : (lollipopSize - 3) * 0.65;
+    ellipse(0, lollipopY, coreSize, coreSize);
+
     visualState.flashAlpha -= 15;
   }
 
+  // 중심축 고정점
   noStroke();
   fill(255);
   ellipse(0, 0, 20, 20);
@@ -465,6 +486,7 @@ window.draw = function () {
 
   resetMatrix();
 
+  // --- 우측 텍스트 ---
   let rightMargin = width - 15;
 
   let displayBPM = isPlaying ? visualState.playingBPM : currentBPM;
@@ -507,6 +529,7 @@ window.draw = function () {
   textAlign(LEFT, BOTTOM);
   text(val2, rightValueX, height - 15);
 
+  // --- 좌측 텍스트 ---
   let leftMargin = 15;
 
   fill(100);
@@ -526,7 +549,7 @@ window.draw = function () {
   text(leftLbl1, leftColonX, height - 35);
   text(leftLbl2, leftColonX, height - 15);
 
-  let leftValueX = leftColonX + 60;
+  let leftValueX = leftColonX + 70;
   textAlign(RIGHT, BOTTOM);
   text(`${metricState.jitterMs.toFixed(3)} ms`, leftValueX, height - 35);
   text(`${metricState.driftMs.toFixed(3)} ms`, leftValueX, height - 15);
