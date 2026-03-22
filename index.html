@@ -36,6 +36,56 @@
         width: calc(100% - 40px);
       }
 
+      /* === 캔버스를 버튼처럼 사용하기 위한 스타일 === */
+      #canvas-container {
+        border: 2px solid #333;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #1a1a1a;
+        width: 440px;
+        max-width: calc(100% - 40px);
+        box-sizing: border-box;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      #canvas-container:active {
+        border-color: #555 !important;
+        box-shadow: none !important;
+        animation: none !important;
+      }
+
+      @keyframes breatheGreen {
+        0% {
+          border-color: #333;
+          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
+        }
+        50% {
+          border-color: #3b5e40;
+          box-shadow: 0 0 12px rgba(59, 94, 64, 0.4);
+        }
+        100% {
+          border-color: #333;
+          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
+        }
+      }
+
+      .ready-pulse {
+        animation: breatheGreen 4s infinite ease-in-out;
+      }
+
+      #canvas-container canvas {
+        width: 100% !important;
+        height: auto !important;
+        display: block;
+      }
+
+      /* === 제어 박스 스타일 === */
       .controls {
         background: #1a1a1a;
         border: 2px solid #333;
@@ -43,7 +93,7 @@
         border-radius: 12px;
         display: flex;
         flex-direction: column;
-        gap: 20px;
+        gap: 16px; /* 내부 요소 간격 통일 */
         width: 440px;
         max-width: calc(100% - 40px);
         box-sizing: border-box;
@@ -53,18 +103,18 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        min-height: 40px; /* 모든 제어 행의 높이를 40px로 균등화 */
       }
 
-      .control-group label,
-      .toggle-container label {
-        font-size: 18px;
+      .control-group label {
+        font-size: 16px; /* 라벨을 입력칸 폰트 크기(16px)와 동일하게 맞춰 밸런스 조정 */
         font-weight: bold;
         color: #ffffff;
         white-space: nowrap;
       }
 
       .slider-label {
-        width: 85px;
+        width: 120px; /* 라벨 공간을 넉넉히 주어 줄바꿈 방지 및 정렬 유지 */
         flex-shrink: 0;
       }
 
@@ -73,6 +123,7 @@
         align-items: center;
         gap: 12px;
         flex-grow: 1;
+        height: 100%;
       }
 
       /* === 커스텀 슬라이더 === */
@@ -158,7 +209,7 @@
       }
 
       #beat-numerator {
-        width: 46px; /* 분자만 2자리에 맞게 살짝 타이트하게 유지 */
+        width: 46px;
         flex-shrink: 0;
       }
 
@@ -250,7 +301,6 @@
         box-sizing: border-box;
         text-align: center;
         cursor: pointer;
-        /* 브라우저 기본 패딩을 줄여 화살표와 텍스트가 54px 안에 잘 들어가도록 처리 */
         padding: 0 4px;
       }
       select:focus {
@@ -259,55 +309,6 @@
       select option {
         background: #333;
         color: #ffffff;
-      }
-
-      /* === 캔버스를 버튼처럼 사용하기 위한 스타일 === */
-      #canvas-container {
-        border: 2px solid #333;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #1a1a1a;
-        width: 440px;
-        max-width: calc(100% - 40px);
-        box-sizing: border-box;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
-        user-select: none;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-      }
-
-      #canvas-container:active {
-        border-color: #555 !important;
-        box-shadow: none !important;
-        animation: none !important;
-      }
-
-      @keyframes breatheGreen {
-        0% {
-          border-color: #333;
-          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
-        }
-        50% {
-          border-color: #3b5e40;
-          box-shadow: 0 0 12px rgba(59, 94, 64, 0.4);
-        }
-        100% {
-          border-color: #333;
-          box-shadow: 0 0 0px rgba(59, 94, 64, 0);
-        }
-      }
-
-      .ready-pulse {
-        animation: breatheGreen 4s infinite ease-in-out;
-      }
-
-      #canvas-container canvas {
-        width: 100% !important;
-        height: auto !important;
-        display: block;
       }
 
       .lookahead-ui {
@@ -325,19 +326,7 @@
         white-space: nowrap;
       }
 
-      .toggle-container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        width: 440px;
-        max-width: calc(100% - 40px);
-        background: #1a1a1a;
-        border: 2px solid #333;
-        padding: 15px 25px;
-        border-radius: 12px;
-        box-sizing: border-box;
-      }
-
+      /* === 토글 스위치 공통 === */
       .switch {
         position: relative;
         display: inline-block;
@@ -418,22 +407,28 @@
 
       @media (max-width: 480px) {
         .control-group {
-          flex-direction: column;
-          align-items: flex-start;
+          flex-direction: row; /* 모바일에서도 가로 정렬 강제 유지로 통일감 보장 */
+          flex-wrap: wrap;
+          align-items: center;
           gap: 12px;
+          min-height: 40px;
         }
         .slider-label {
           width: auto;
+          flex-shrink: 0;
         }
         .input-slider-group,
         .time-signature-group {
           margin-left: 0;
           width: 100%;
+          justify-content: flex-end;
         }
         .play-row {
-          flex-direction: row !important;
-          align-items: center !important;
           justify-content: space-between !important;
+          width: 100%;
+        }
+        .keep-awake-row {
+          justify-content: space-between;
           width: 100%;
         }
       }
@@ -442,8 +437,13 @@
   <body>
     <div class="ad-banner" id="ad-top">[상단 배너 광고 영역 - 728x90]</div>
 
+    <div id="canvas-container" title="Click to Play/Stop"></div>
+
     <div class="controls">
-      <div class="control-group play-row">
+      <div
+        class="control-group play-row"
+        style="min-height: auto; margin-bottom: 4px"
+      >
         <div class="app-title">PrecisionTick</div>
         <div class="lookahead-ui" id="status-text">
           <span>Ready</span>
@@ -502,7 +502,7 @@
       </div>
 
       <div class="control-group">
-        <label>Time Signature</label>
+        <label class="slider-label">Time Signature</label>
         <div class="time-signature-group">
           <div class="acc-toggle-wrapper">
             <span>ACC</span>
@@ -520,7 +520,7 @@
             value="4"
             title="한 마디 박자 수"
           />
-          <span style="font-size: 20px; font-weight: bold; margin: 0 2px"
+          <span style="font-size: 18px; font-weight: bold; margin: 0 4px"
             >/</span
           >
           <select id="beat-denominator">
@@ -532,16 +532,14 @@
           </select>
         </div>
       </div>
-    </div>
 
-    <div id="canvas-container" title="Click to Play/Stop"></div>
-
-    <div class="toggle-container">
-      <label for="keep-awake-toggle">Keep Display Awake</label>
-      <label class="switch">
-        <input type="checkbox" id="keep-awake-toggle" />
-        <span class="slider"></span>
-      </label>
+      <div class="control-group keep-awake-row">
+        <label for="keep-awake-toggle">Keep Display Awake</label>
+        <label class="switch">
+          <input type="checkbox" id="keep-awake-toggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="info-text">
